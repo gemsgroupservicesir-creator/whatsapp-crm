@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/use-auth";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 import {
   Building2,
   Check,
@@ -51,18 +52,20 @@ interface Workspace {
 
 export function WorkspaceSwitcher() {
   const router = useRouter();
-  const { account, refreshProfile, isOwner, isAdmin } = useAuth();
+  const { account, refreshProfile, isOwner, isAdmin, profileLoading } = useAuth();
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [loading, setLoading] = useState(false);
   const [switching, setSwitching] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [switchModalOpen, setSwitchModalOpen] = useState(false);
   const [newWorkspaceName, setNewWorkspaceName] = useState("");
   const [selectedFeatures, setSelectedFeatures] = useState<string[]>(DEFAULT_ENABLED_FEATURES);
   const [creating, setCreating] = useState(false);
 
   const fetchWorkspaces = async () => {
     try {
-      const res = await fetch("/api/account/workspaces");
+      setLoading(true);
+      const res = await fetch("/api/account/workspaces", { cache: "no-store" });
       if (!res.ok) return;
       const data = await res.json();
       if (Array.isArray(data.workspaces)) {
@@ -70,6 +73,8 @@ export function WorkspaceSwitcher() {
       }
     } catch (err) {
       console.error("Failed to fetch workspaces:", err);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -78,9 +83,16 @@ export function WorkspaceSwitcher() {
   }, [account?.id]);
 
   const handleSwitch = async (targetId: string) => {
-    if (targetId === account?.id || switching) return;
+    if (targetId === account?.id) {
+      setSwitchModalOpen(false);
+      return;
+    }
+    if (switching) return;
+
     try {
       setSwitching(true);
+      toast.loading("Switching workspace...", { id: "ws-switch" });
+
       const res = await fetch("/api/account/switch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -89,18 +101,24 @@ export function WorkspaceSwitcher() {
 
       const data = await res.json();
       if (!res.ok) {
-        toast.error(data.error || "Failed to switch workspace");
+        toast.error(data.error || "Failed to switch workspace", { id: "ws-switch" });
+        setSwitching(false);
         return;
       }
 
-      toast.success(`Switched to ${data.workspace?.name || "workspace"}`);
-      await refreshProfile();
-      // Reload page to refresh all queries and caches for the new workspace
-      window.location.reload();
+      toast.success(
+        `Switched to ${data.workspace?.name || data.workspace?.account_name || "workspace"}`,
+        { id: "ws-switch" }
+      );
+      setSwitchModalOpen(false);
+
+      // Clean redirect to dashboard to reload fresh data for the active workspace
+      setTimeout(() => {
+        window.location.href = "/dashboard";
+      }, 250);
     } catch (err) {
       console.error("Switch error:", err);
-      toast.error("Failed to switch workspace");
-    } finally {
+      toast.error("Failed to switch workspace", { id: "ws-switch" });
       setSwitching(false);
     }
   };
@@ -131,7 +149,7 @@ export function WorkspaceSwitcher() {
       setNewWorkspaceName("");
       setSelectedFeatures(DEFAULT_ENABLED_FEATURES);
       await refreshProfile();
-      window.location.reload();
+      window.location.href = "/dashboard";
     } catch (err) {
       console.error("Create workspace error:", err);
       toast.error("Failed to create workspace");
@@ -150,6 +168,19 @@ export function WorkspaceSwitcher() {
   };
 
   const isPrivileged = isOwner || isAdmin;
+
+  // While loading initial profile and workspaces, show a subtle pulse skeleton
+  if (profileLoading || (loading && workspaces.length === 0)) {
+    return (
+      <div className="flex w-full items-center gap-2 rounded-lg border border-border/70 bg-muted/40 p-2 text-left text-xs animate-pulse">
+        <div className="size-7 shrink-0 rounded-md bg-muted" />
+        <div className="min-w-0 flex-1 space-y-1">
+          <div className="h-3 w-24 bg-muted rounded" />
+          <div className="h-2 w-16 bg-muted rounded" />
+        </div>
+      </div>
+    );
+  }
 
   // Non-admins with 1 or 0 workspaces just see their assigned workspace label (no switcher, no + button)
   if (!isPrivileged && workspaces.length <= 1) {
@@ -224,8 +255,20 @@ export function WorkspaceSwitcher() {
               return (
                 <DropdownMenuItem
                   key={ws.id}
-                  onClick={() => handleSwitch(ws.id)}
-                  className="flex cursor-pointer items-center justify-between gap-2 py-2"
+                  closeOnClick={true}
+                  onPointerDown={(e) => {
+                    if (!isActive && !switching) {
+                      e.preventDefault();
+                      handleSwitch(ws.id);
+                    }
+                  }}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    if (!isActive && !switching) {
+                      handleSwitch(ws.id);
+                    }
+                  }}
+                  className="flex cursor-pointer items-center justify-between gap-2 py-2.5"
                 >
                   <div className="min-w-0 flex-1">
                     <p className="truncate font-medium text-foreground">
@@ -243,6 +286,18 @@ export function WorkspaceSwitcher() {
                 </DropdownMenuItem>
               );
             })}
+
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onClick={(e) => {
+                e.preventDefault();
+                setSwitchModalOpen(true);
+              }}
+              className="flex cursor-pointer items-center gap-2 text-muted-foreground hover:text-foreground py-2 text-xs"
+            >
+              <Building2 className="size-3.5" />
+              Manage / Switch Workspaces...
+            </DropdownMenuItem>
 
             {isPrivileged && (
               <>
@@ -382,6 +437,95 @@ export function WorkspaceSwitcher() {
               ) : (
                 "Create Workspace"
               )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal to Switch Workspace */}
+      <Dialog open={switchModalOpen} onOpenChange={setSwitchModalOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Switch Workspace</DialogTitle>
+            <DialogDescription>
+              Select the workspace you want to switch to.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="mt-3 flex flex-col gap-2.5 max-h-[60vh] overflow-y-auto pr-1">
+            {workspaces.map((ws) => {
+              const isActive = ws.id === account?.id;
+              return (
+                <div
+                  key={ws.id}
+                  onClick={() => {
+                    if (!isActive && !switching) {
+                      handleSwitch(ws.id);
+                    }
+                  }}
+                  className={cn(
+                    "flex items-center justify-between gap-3 p-3 rounded-xl border transition-all cursor-pointer text-left",
+                    isActive
+                      ? "border-primary bg-primary/10 shadow-xs"
+                      : "border-border/80 bg-card hover:border-primary/50 hover:bg-muted/40"
+                  )}
+                >
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <div
+                      className={cn(
+                        "flex size-9 shrink-0 items-center justify-center rounded-lg",
+                        isActive
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-muted text-muted-foreground"
+                      )}
+                    >
+                      <Building2 className="size-4" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-semibold text-foreground text-sm">
+                        {ws.name}
+                      </p>
+                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-0.5">
+                        {ws.phone_number_id ? (
+                          <span className="flex items-center gap-1 text-emerald-400 font-medium">
+                            <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                            WhatsApp Connected
+                          </span>
+                        ) : (
+                          <span>No WhatsApp number linked</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  {isActive ? (
+                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-primary/20 text-primary">
+                      Current
+                    </span>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={switching}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleSwitch(ws.id);
+                      }}
+                    >
+                      {switching ? <Loader2 className="size-3 animate-spin" /> : "Switch"}
+                    </Button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          <DialogFooter className="mt-3">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setSwitchModalOpen(false)}
+            >
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -4,6 +4,8 @@ import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { toErrorResponse } from "@/lib/auth/account";
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from "@/lib/rate-limit";
 
+export const dynamic = 'force-dynamic';
+
 function supabaseAdmin() {
   return createAdminClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -43,7 +45,14 @@ export async function POST(request: Request) {
     });
 
     if (!rpcError && rpcData?.ok) {
-      return NextResponse.json({ success: true, workspace: rpcData });
+      return NextResponse.json({
+        success: true,
+        workspace: {
+          id: rpcData.account_id || accountId,
+          name: rpcData.account_name || "Workspace",
+          role: rpcData.role || "owner",
+        },
+      });
     }
 
     // Fallback via Admin Client
