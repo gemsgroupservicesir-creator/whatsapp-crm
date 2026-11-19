@@ -117,44 +117,59 @@ export async function POST(request: Request) {
     const limit = checkRateLimit(`workspace:create:${user.id}`, RATE_LIMITS.adminAction);
     if (!limit.success) return rateLimitResponse(limit);
 
-    const body = (await request.json().catch(() => null)) as { name?: string } | null;
+    const body = (await request.json().catch(() => null)) as {
+      name?: string;
+      features?: string[];
+    } | null;
     const name = body?.name?.trim();
 
     if (!name) {
       return NextResponse.json({ error: "Workspace name is required" }, { status: 400 });
     }
 
-    // Try RPC first
-    const { data: rpcData, error: rpcError } = await supabase.rpc("create_workspace", {
-      p_name: name,
-    });
-
-    if (!rpcError && rpcData?.ok) {
-      return NextResponse.json({ workspace: rpcData });
-    }
-
-    if (rpcError) {
-      console.warn("[POST /api/account/workspaces] RPC failed, falling back to admin client:", rpcError);
-    }
+    const requestedFeatures = Array.isArray(body?.features) ? body.features : null;
 
     // Fallback via Admin Client
     const admin = supabaseAdmin();
 
-    const { data: newAccount, error: accError } = await admin
-      .from("accounts")
-      .insert({
-        name,
-        owner_user_id: user.id,
-      })
-      .select("id, name")
-      .single();
+    let newAccount: { id: string; name: string } | null = null;
 
-    if (accError) {
-      console.error("[POST /api/account/workspaces] create error:", accError);
-      return NextResponse.json(
-        { error: accError.message || "Failed to create workspace" },
-        { status: 500 }
-      );
+    // Try inserting with enabled_features first if requested
+    if (requestedFeatures) {
+      const { data: accWithFeat, error: featErr } = await admin
+        .from("accounts")
+        .insert({
+          name,
+          owner_user_id: user.id,
+          enabled_features: requestedFeatures,
+        })
+        .select("id, name")
+        .maybeSingle();
+
+      if (!featErr && accWithFeat) {
+        newAccount = accWithFeat;
+      }
+    }
+
+    // Otherwise standard insert
+    if (!newAccount) {
+      const { data: stdAcc, error: accError } = await admin
+        .from("accounts")
+        .insert({
+          name,
+          owner_user_id: user.id,
+        })
+        .select("id, name")
+        .single();
+
+      if (accError) {
+        console.error("[POST /api/account/workspaces] create error:", accError);
+        return NextResponse.json(
+          { error: accError.message || "Failed to create workspace" },
+          { status: 500 }
+        );
+      }
+      newAccount = stdAcc;
     }
 
     // Add to account_members

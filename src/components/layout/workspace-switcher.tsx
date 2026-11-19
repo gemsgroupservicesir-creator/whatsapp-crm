@@ -34,6 +34,11 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  WORKSPACE_FEATURES,
+  DEFAULT_ENABLED_FEATURES,
+} from "@/lib/workspace/features";
 
 interface Workspace {
   id: string;
@@ -52,6 +57,7 @@ export function WorkspaceSwitcher() {
   const [switching, setSwitching] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [newWorkspaceName, setNewWorkspaceName] = useState("");
+  const [selectedFeatures, setSelectedFeatures] = useState<string[]>(DEFAULT_ENABLED_FEATURES);
   const [creating, setCreating] = useState(false);
 
   const fetchWorkspaces = async () => {
@@ -108,7 +114,10 @@ export function WorkspaceSwitcher() {
       const res = await fetch("/api/account/workspaces", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({
+          name,
+          features: selectedFeatures,
+        }),
       });
 
       const data = await res.json();
@@ -120,6 +129,7 @@ export function WorkspaceSwitcher() {
       toast.success(`Workspace "${name}" created!`);
       setDialogOpen(false);
       setNewWorkspaceName("");
+      setSelectedFeatures(DEFAULT_ENABLED_FEATURES);
       await refreshProfile();
       window.location.reload();
     } catch (err) {
@@ -262,6 +272,57 @@ export function WorkspaceSwitcher() {
                 disabled={creating}
                 className="bg-muted border-border"
               />
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-semibold uppercase text-muted-foreground">
+                  Features for this workspace
+                </Label>
+                <span className="text-[11px] text-muted-foreground">
+                  {selectedFeatures.length} of {WORKSPACE_FEATURES.length} enabled
+                </span>
+              </div>
+              <div className="grid grid-cols-1 gap-1.5 max-h-52 overflow-y-auto pr-1">
+                {WORKSPACE_FEATURES.map((feat) => {
+                  const isChecked = selectedFeatures.includes(feat.id);
+                  return (
+                    <div
+                      key={feat.id}
+                      onClick={() => {
+                        setSelectedFeatures((prev) =>
+                          prev.includes(feat.id)
+                            ? prev.filter((id) => id !== feat.id)
+                            : [...prev, feat.id]
+                        );
+                      }}
+                      className={`flex items-center justify-between p-2 rounded-md border text-xs cursor-pointer transition-colors ${
+                        isChecked
+                          ? "border-primary/40 bg-primary/5 text-foreground"
+                          : "border-border/60 bg-muted/20 text-muted-foreground opacity-60"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <Checkbox
+                          checked={isChecked}
+                          onCheckedChange={() => {
+                            setSelectedFeatures((prev) =>
+                              prev.includes(feat.id)
+                                ? prev.filter((id) => id !== feat.id)
+                                : [...prev, feat.id]
+                            );
+                          }}
+                          className="data-[state=checked]:bg-primary"
+                        />
+                        <span className="font-medium">{feat.name}</span>
+                      </div>
+                      <span className="text-[10px] text-muted-foreground">
+                        {isChecked ? "Ticked" : "Unticked"}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
 

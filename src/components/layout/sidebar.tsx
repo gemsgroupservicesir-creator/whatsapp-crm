@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
 import { useTotalUnread } from "@/hooks/use-total-unread";
@@ -79,27 +79,26 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
+import { DEFAULT_ENABLED_FEATURES } from "@/lib/workspace/features";
+
 interface NavItem {
   href: string;
   labelKey: string;
   icon: typeof LayoutDashboard;
-  /**
-   * When true, the nav row renders a small "Beta" chip after the label.
-   * Purely informational — doesn't affect routing or access.
-   */
   beta?: boolean;
+  featureKey?: string;
 }
 
 const navItems: NavItem[] = [
   { href: "/dashboard", labelKey: "dashboard", icon: LayoutDashboard },
-  { href: "/inbox", labelKey: "inbox", icon: MessageSquare },
+  { href: "/inbox", labelKey: "inbox", icon: MessageSquare, featureKey: "inbox" },
   { href: "/notifications", labelKey: "notifications", icon: Bell },
-  { href: "/contacts", labelKey: "contacts", icon: Users },
-  { href: "/pipelines", labelKey: "pipelines", icon: GitBranch },
-  { href: "/broadcasts", labelKey: "broadcasts", icon: Radio },
-  { href: "/automations", labelKey: "automations", icon: Zap },
-  { href: "/flows", labelKey: "flows", icon: Workflow, beta: true },
-  { href: "/agents", labelKey: "aiAgents", icon: Bot },
+  { href: "/contacts", labelKey: "contacts", icon: Users, featureKey: "contacts" },
+  { href: "/pipelines", labelKey: "pipelines", icon: GitBranch, featureKey: "pipelines" },
+  { href: "/broadcasts", labelKey: "broadcasts", icon: Radio, featureKey: "broadcasts" },
+  { href: "/automations", labelKey: "automations", icon: Zap, featureKey: "automations" },
+  { href: "/flows", labelKey: "flows", icon: Workflow, beta: true, featureKey: "flows" },
+  { href: "/agents", labelKey: "aiAgents", icon: Bot, featureKey: "agents" },
 ];
 
 const bottomNavItems = [
@@ -118,16 +117,34 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
   const t = useTranslations("Sidebar");
   const pathname = usePathname();
   const { profile, profileLoading, account, accountRole, signOut } = useAuth();
+  const [enabledFeatures, setEnabledFeatures] = useState<string[]>(DEFAULT_ENABLED_FEATURES);
+
+  useEffect(() => {
+    let ignore = false;
+    async function loadFeatures() {
+      try {
+        const res = await fetch("/api/account/features");
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!ignore && Array.isArray(data.features)) {
+          setEnabledFeatures(data.features);
+        }
+      } catch {
+        // graceful fallback to default
+      }
+    }
+    loadFeatures();
+    return () => {
+      ignore = true;
+    };
+  }, [account?.id]);
+
+  const visibleNavItems = navItems.filter(
+    (item) => !item.featureKey || enabledFeatures.includes(item.featureKey)
+  );
+
   const totalUnread = useTotalUnread();
   const unreadNotifications = useUnreadNotifications();
-  // Only surface the account-name strip when it actually carries
-  // information. A solo user's personal account is named after them
-  // (the 017 signup trigger seeds it from `full_name`), so showing it
-  // here would just duplicate the user name in the footer below. Once
-  // the account is renamed or the user joins a shared account, the
-  // name diverges and the strip becomes meaningful — that's the signal
-  // we gate on. Wait for the profile fetch to settle first, otherwise
-  // the strip flashes in once the row resolves (a layout jump).
   const showAccountStrip =
     !profileLoading &&
     !!account?.name &&
@@ -214,7 +231,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
         {/* Main navigation */}
         <nav className="flex-1 overflow-y-auto px-3 py-4">
           <ul className="flex flex-col gap-1">
-            {navItems.map((item) => {
+            {visibleNavItems.map((item) => {
               const isActive =
                 pathname === item.href ||
                 (item.href !== "/dashboard" && pathname.startsWith(item.href));
