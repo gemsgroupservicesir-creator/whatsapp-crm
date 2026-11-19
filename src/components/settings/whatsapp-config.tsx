@@ -749,8 +749,14 @@ export function WhatsAppConfig() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
-              <Label className="text-muted-foreground">{t('phoneNumberId')}</Label>
+              <Label htmlFor="meta_phone_number_id" className="text-muted-foreground">{t('phoneNumberId')}</Label>
               <Input
+                id="meta_phone_number_id"
+                name="meta_phone_number_id"
+                autoComplete="off"
+                data-lpignore="true"
+                data-1p-ignore="true"
+                data-form-type="other"
                 placeholder={t('phoneNumberIdPlaceholder')}
                 value={phoneNumberId}
                 onChange={(e) => setPhoneNumberId(e.target.value)}
@@ -759,8 +765,14 @@ export function WhatsAppConfig() {
             </div>
 
             <div className="space-y-2">
-              <Label className="text-muted-foreground">{t('wabaId')}</Label>
+              <Label htmlFor="meta_waba_account_id" className="text-muted-foreground">{t('wabaId')}</Label>
               <Input
+                id="meta_waba_account_id"
+                name="meta_waba_account_id"
+                autoComplete="off"
+                data-lpignore="true"
+                data-1p-ignore="true"
+                data-form-type="other"
                 placeholder={t('wabaIdPlaceholder')}
                 value={wabaId}
                 onChange={(e) => setWabaId(e.target.value)}
@@ -769,10 +781,18 @@ export function WhatsAppConfig() {
             </div>
 
             <div className="space-y-2">
-              <Label className="text-muted-foreground">{t('accessToken')}</Label>
+              <Label htmlFor="meta_permanent_access_token" className="text-muted-foreground">{t('accessToken')}</Label>
               <div className="relative">
                 <Input
-                  type={showToken ? 'text' : 'password'}
+                  id="meta_permanent_access_token"
+                  name="meta_permanent_access_token"
+                  type="text"
+                  autoComplete="off"
+                  data-lpignore="true"
+                  data-1p-ignore="true"
+                  data-form-type="other"
+                  spellCheck={false}
+                  style={showToken ? undefined : ({ WebkitTextSecurity: 'disc' } as React.CSSProperties)}
                   placeholder={t('accessTokenPlaceholder')}
                   value={accessToken}
                   onChange={(e) => {
@@ -785,7 +805,7 @@ export function WhatsAppConfig() {
                       setTokenEdited(true);
                     }
                   }}
-                  className="bg-muted border-border text-foreground placeholder:text-muted-foreground pr-10"
+                  className={`bg-muted border-border text-foreground placeholder:text-muted-foreground pr-10 ${!showToken ? 'font-mono' : ''}`}
                 />
                 <button
                   type="button"
@@ -803,8 +823,14 @@ export function WhatsAppConfig() {
             </div>
 
             <div className="space-y-2">
-              <Label className="text-muted-foreground">{t('webhookVerifyToken')}</Label>
+              <Label htmlFor="meta_webhook_verify_token" className="text-muted-foreground">{t('webhookVerifyToken')}</Label>
               <Input
+                id="meta_webhook_verify_token"
+                name="meta_webhook_verify_token"
+                autoComplete="off"
+                data-lpignore="true"
+                data-1p-ignore="true"
+                data-form-type="other"
                 placeholder={t('webhookVerifyTokenPlaceholder')}
                 value={verifyToken}
                 onChange={(e) => {
@@ -827,12 +853,18 @@ export function WhatsAppConfig() {
             </div>
 
             <div className="space-y-2">
-              <Label className="text-muted-foreground">
+              <Label htmlFor="meta_two_step_pin" className="text-muted-foreground">
                 {t('twoStepPin')}
                 <span className="ml-1 text-muted-foreground">{t('optional')}</span>
               </Label>
               <Input
+                id="meta_two_step_pin"
+                name="meta_two_step_pin"
                 type="text"
+                autoComplete="off"
+                data-lpignore="true"
+                data-1p-ignore="true"
+                data-form-type="other"
                 inputMode="numeric"
                 maxLength={6}
                 placeholder={t('pinPlaceholder')}
