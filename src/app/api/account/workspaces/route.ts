@@ -226,3 +226,155 @@ export async function POST(request: Request) {
     return toErrorResponse(err);
   }
 }
+
+/**
+ * DELETE /api/account/workspaces
+ * Deletes a workspace and its associated data (cascading).
+ * Only the owner can delete the workspace. Cannot delete if it is the only workspace.
+ */
+export async function DELETE(request: Request) {
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser();
+
+    if (authError || !user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const limit = checkRateLimit(`workspace:delete:${user.id}`, RATE_LIMITS.adminAction);
+    if (!limit.success) return rateLimitResponse(limit);
+
+    const body = (await request.json().catch(() => null)) as {
+      workspaceId?: string;
+    } | null;
+    const workspaceId = body?.workspaceId?.trim();
+
+    if (!workspaceId) {
+      return NextResponse.json({ error: "workspaceId is required" }, { status: 400 });
+    }
+
+    const admin = supabaseAdmin();
+
+    // Check workspace existence & owner
+    const { data: targetAccount, error: accErr } = await admin
+      .from("accounts")
+      .select("id, name, owner_user_id")
+      .eq("id", workspaceId)
+      .maybeSingle();
+
+    if (accErr || !targetAccount) {
+      return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
+    }
+
+    // Must be the owner or account_members owner
+    const isOwner = targetAccount.owner_user_id === user.id;
+    if (!isOwner) {
+      const { data: member } = await admin
+        .from("account_members")
+        .select("role")
+        .eq("account_id", workspaceId)
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      if (member?.role !== "owner") {
+        return NextResponse.json(
+          { error: "Only the workspace owner can delete this workspace" },
+          { status: 403 }
+        );
+      }
+    }
+
+    // Ensure user has at least one other workspace
+    const { data: userAccounts } = await admin
+      .from("accounts")
+      .select("id, name")
+      .eq("owner_user_id", user.id);
+
+    if (!userAccounts || userAccounts.length <= 1) {
+      return NextResponse.json(
+        { error: "Cannot delete your only workspace. You must have at least one workspace." },
+        { status: 400 }
+      );
+    }
+
+    // Check if target workspace is currently the user's active workspace
+    const { data: profile } = await admin
+      .from("profiles")
+      .select("account_id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    let fallbackAccountId: string | null = null;
+    if (profile?.account_id === workspaceId) {
+      const fallback = userAccounts.find((a) => a.id !== workspaceId);
+      if (!fallback) {
+        return NextResponse.json(
+          { error: "No alternative workspace found to switch to" },
+          { status: 400 }
+        );
+      }
+      fallbackAccountId = fallback.id;
+
+      // Switch caller's active profile before deleting the account
+      await admin
+        .from("profiles")
+        .update({ account_id: fallback.id, account_role: "owner" })
+        .eq("user_id", user.id);
+    }
+
+    // Reassign any other users who currently have this as active account_id
+    const { data: otherProfiles } = await admin
+      .from("profiles")
+      .select("id, user_id")
+      .eq("account_id", workspaceId);
+
+    for (const p of otherProfiles || []) {
+      if (p.user_id !== user.id) {
+        const { data: otherMember } = await admin
+          .from("account_members")
+          .select("account_id, role")
+          .eq("user_id", p.user_id)
+          .neq("account_id", workspaceId)
+          .limit(1)
+          .maybeSingle();
+
+        if (otherMember) {
+          await admin
+            .from("profiles")
+            .update({
+              account_id: otherMember.account_id,
+              account_role: otherMember.role || "agent",
+            })
+            .eq("id", p.id);
+        }
+      }
+    }
+
+    // Now delete the workspace account (all child tables cascade delete)
+    const { error: deleteError } = await admin
+      .from("accounts")
+      .delete()
+      .eq("id", workspaceId);
+
+    if (deleteError) {
+      console.error("[DELETE /api/account/workspaces] delete error:", deleteError);
+      return NextResponse.json(
+        { error: deleteError.message || "Failed to delete workspace" },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      deletedId: workspaceId,
+      fallbackAccountId,
+    });
+  } catch (err) {
+    console.error("[DELETE /api/account/workspaces] unhandled exception:", err);
+    return toErrorResponse(err);
+  }
+}
+
