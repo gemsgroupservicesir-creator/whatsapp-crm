@@ -20,7 +20,9 @@ import { InboxSettings } from '@/components/settings/inbox-settings';
 import { MembersTab } from '@/components/settings/members-tab';
 import { ApiKeysSettings } from '@/components/settings/api-keys-settings';
 import { WorkspaceFeaturesPanel } from '@/components/settings/workspace-features';
+import { ShieldAlert } from 'lucide-react';
 import {
+  SECTION_META,
   resolveSection,
   type SettingsSection,
 } from '@/components/settings/settings-sections';
@@ -44,7 +46,8 @@ export default function SettingsPage() {
 function SettingsPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { defaultCurrency } = useAuth();
+  const { defaultCurrency, isOwner, isAdmin } = useAuth();
+  const isPrivileged = isOwner || isAdmin;
   const { mode } = useTheme();
   const t = useTranslations('Settings');
 
@@ -53,6 +56,7 @@ function SettingsPageInner() {
   // app sidebar/header working. Legacy tab values (tags, custom-fields)
   // resolve onto their new home; unknown/empty → the Overview landing.
   const section = resolveSection(searchParams.get('tab'));
+  const isForbidden = !!SECTION_META[section]?.adminOnly && !isPrivileged;
 
   const go = (next: SettingsSection) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -100,7 +104,32 @@ function SettingsPageInner() {
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[236px_minmax(0,1fr)] lg:items-start">
         <SettingsRail active={section} onSelect={go} hints={hints} />
-        <div className="min-w-0">{panel[section]}</div>
+        <div className="min-w-0">
+          {isForbidden ? (
+            <div className="rounded-xl border border-border bg-card p-8 text-center shadow-xs">
+              <div className="mx-auto flex size-12 items-center justify-center rounded-full bg-primary/10 text-primary">
+                <ShieldAlert className="size-6 text-primary" />
+              </div>
+              <h2 className="mt-4 text-lg font-semibold text-foreground">
+                Access Restricted
+              </h2>
+              <p className="mx-auto mt-1.5 max-w-md text-sm text-muted-foreground">
+                Only workspace administrators and owners have permission to manage this section.
+              </p>
+              <div className="mt-5">
+                <button
+                  type="button"
+                  onClick={() => go('overview')}
+                  className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+                >
+                  Return to Overview
+                </button>
+              </div>
+            </div>
+          ) : (
+            panel[section]
+          )}
+        </div>
       </div>
     </div>
   );

@@ -6,6 +6,7 @@ import { useFormatter, useTranslations } from 'next-intl'
 
 import type { PhoneHealth } from '@/lib/whatsapp/phone-health'
 import { cn } from '@/lib/utils'
+import { useAuth } from '@/hooks/use-auth'
 
 const DOT_CLASS = {
   GREEN: 'bg-status-good',
@@ -17,6 +18,8 @@ const DOT_CLASS = {
 export function WhatsAppHealthChip() {
   const t = useTranslations('Dashboard.overview.health')
   const format = useFormatter()
+  const { isOwner, isAdmin } = useAuth()
+  const isPrivileged = isOwner || isAdmin
   const [health, setHealth] = useState<PhoneHealth | null>(null)
 
   useEffect(() => {
@@ -50,6 +53,18 @@ export function WhatsAppHealthChip() {
 
   const dot =
     health.state === 'connected' ? DOT_CLASS[health.quality] : health.state === 'disconnected' ? DOT_CLASS.RED : DOT_CLASS.UNKNOWN
+
+  if (!isPrivileged) {
+    return (
+      <div
+        title={t('title')}
+        className="inline-flex h-8 max-w-full items-center gap-2 rounded-lg border border-border bg-card px-2.5 text-xs text-muted-foreground"
+      >
+        <span className={cn('size-2 shrink-0 rounded-full', dot)} aria-hidden />
+        <span className="truncate">{label}</span>
+      </div>
+    )
+  }
 
   return (
     <Link

@@ -8,10 +8,16 @@ import { buttonVariants } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { setupSteps, type OverviewSetup } from '@/lib/dashboard/overview'
 import { cn } from '@/lib/utils'
+import { useAuth } from '@/hooks/use-auth'
 
 export function SetupChecklist({ setup }: { setup: OverviewSetup }) {
   const t = useTranslations('Dashboard.overview.setup')
-  const steps = setupSteps(setup)
+  const { isOwner, isAdmin } = useAuth()
+  const isPrivileged = isOwner || isAdmin
+  const rawSteps = setupSteps(setup)
+  const steps = isPrivileged
+    ? rawSteps
+    : rawSteps.filter((s) => s.id !== 'whatsapp' && s.id !== 'teammate')
   const done = steps.filter((s) => s.done).length
   const nextId = steps.find((s) => !s.done)?.id
 

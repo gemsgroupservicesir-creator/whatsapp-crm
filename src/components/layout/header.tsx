@@ -48,7 +48,7 @@ import { useTranslations } from "next-intl";
 export function Header({ onOpenSidebar }: HeaderProps) {
   const t = useTranslations("Header");
   const pathname = usePathname();
-  const { profile, signOut } = useAuth();
+  const { profile, signOut, isOwner, isAdmin } = useAuth();
   const titleKey = getPageTitleKey(pathname);
 
   const initial =
@@ -124,7 +124,7 @@ export function Header({ onOpenSidebar }: HeaderProps) {
           <DropdownMenuItem
             render={
               <Link
-                href="/settings?tab=whatsapp"
+                href={isOwner || isAdmin ? "/settings" : "/settings?tab=profile"}
                 className="text-popover-foreground focus:bg-accent focus:text-accent-foreground"
               />
             }

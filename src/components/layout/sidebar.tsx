@@ -116,7 +116,7 @@ import { useTranslations } from "next-intl";
 export function Sidebar({ open = false, onClose }: SidebarProps) {
   const t = useTranslations("Sidebar");
   const pathname = usePathname();
-  const { profile, profileLoading, account, accountRole, signOut } = useAuth();
+  const { profile, profileLoading, account, accountRole, signOut, isOwner, isAdmin } = useAuth();
   const [enabledFeatures, setEnabledFeatures] = useState<string[]>(DEFAULT_ENABLED_FEATURES);
 
   useEffect(() => {
@@ -398,7 +398,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
               <DropdownMenuItem
                 render={
                   <Link
-                    href="/settings?tab=whatsapp"
+                    href={isOwner || isAdmin ? "/settings" : "/settings?tab=profile"}
                     onClick={onClose}
                     className="text-popover-foreground focus:bg-accent focus:text-accent-foreground"
                   />

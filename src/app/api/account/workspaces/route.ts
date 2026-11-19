@@ -117,6 +117,21 @@ export async function POST(request: Request) {
     const limit = checkRateLimit(`workspace:create:${user.id}`, RATE_LIMITS.adminAction);
     if (!limit.success) return rateLimitResponse(limit);
 
+    const admin = supabaseAdmin();
+
+    const { data: callerProfile } = await admin
+      .from("profiles")
+      .select("account_role")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (callerProfile?.account_role !== "owner" && callerProfile?.account_role !== "admin") {
+      return NextResponse.json(
+        { error: "Only administrators can create new workspaces" },
+        { status: 403 }
+      );
+    }
+
     const body = (await request.json().catch(() => null)) as {
       name?: string;
       features?: string[];
@@ -128,9 +143,6 @@ export async function POST(request: Request) {
     }
 
     const requestedFeatures = Array.isArray(body?.features) ? body.features : null;
-
-    // Fallback via Admin Client
-    const admin = supabaseAdmin();
 
     let newAccount: { id: string; name: string } | null = null;
 

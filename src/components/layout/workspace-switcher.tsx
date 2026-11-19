@@ -149,6 +149,34 @@ export function WorkspaceSwitcher() {
     whatsapp_status: null,
   };
 
+  const isPrivileged = isOwner || isAdmin;
+
+  // Non-admins with 1 or 0 workspaces just see their assigned workspace label (no switcher, no + button)
+  if (!isPrivileged && workspaces.length <= 1) {
+    return (
+      <div className="flex w-full items-center gap-2 rounded-lg border border-border/70 bg-muted/40 p-2 text-left text-xs">
+        <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+          <Building2 className="size-4" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-semibold text-foreground">
+            {currentWorkspace.name}
+          </p>
+          <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+            {currentWorkspace.phone_number_id ? (
+              <span className="flex items-center gap-1 text-emerald-400">
+                <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                Connected
+              </span>
+            ) : (
+              <span>No WhatsApp number</span>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
       <div className="flex w-full items-center gap-1.5">
@@ -216,32 +244,38 @@ export function WorkspaceSwitcher() {
               );
             })}
 
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                setTimeout(() => setDialogOpen(true), 100);
-              }}
-              className="flex cursor-pointer items-center gap-2 text-primary focus:text-primary py-2 font-medium"
-            >
-              <PlusCircle className="size-4" />
-              Create Workspace / Number
-            </DropdownMenuItem>
+            {isPrivileged && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setTimeout(() => setDialogOpen(true), 100);
+                  }}
+                  className="flex cursor-pointer items-center gap-2 text-primary focus:text-primary py-2 font-medium"
+                >
+                  <PlusCircle className="size-4" />
+                  Create Workspace / Number
+                </DropdownMenuItem>
+              </>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
 
-        <Button
-          type="button"
-          size="icon"
-          variant="outline"
-          onClick={() => setDialogOpen(true)}
-          title="Create New Workspace / Number"
-          aria-label="Create New Workspace"
-          className="size-11 shrink-0 rounded-lg border-border/70 bg-muted/40 text-muted-foreground hover:bg-muted/80 hover:text-foreground"
-        >
-          <Plus className="size-4" />
-        </Button>
+        {isPrivileged && (
+          <Button
+            type="button"
+            size="icon"
+            variant="outline"
+            onClick={() => setDialogOpen(true)}
+            title="Create New Workspace / Number"
+            aria-label="Create New Workspace"
+            className="size-11 shrink-0 rounded-lg border-border/70 bg-muted/40 text-muted-foreground hover:bg-muted/80 hover:text-foreground"
+          >
+            <Plus className="size-4" />
+          </Button>
+        )}
       </div>
 
       {/* Modal to create a new workspace */}

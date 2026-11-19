@@ -60,7 +60,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
     }
 
-    let role = "agent";
+    let role: string | null = null;
     if (account.owner_user_id === user.id) {
       role = "owner";
     } else {
@@ -72,10 +72,17 @@ export async function POST(request: Request) {
           .eq("account_id", accountId)
           .eq("user_id", user.id)
           .maybeSingle();
-        if (member) role = member.role;
+        if (member?.role) role = member.role;
       } catch {
         // Table may not exist yet
       }
+    }
+
+    if (!role) {
+      return NextResponse.json(
+        { error: "Access denied: you are not a member of this workspace" },
+        { status: 403 }
+      );
     }
 
     // Switch active account in profile
