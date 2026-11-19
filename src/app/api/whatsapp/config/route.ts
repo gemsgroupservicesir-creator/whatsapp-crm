@@ -314,19 +314,22 @@ export async function POST(request: Request) {
     // inbound message. See issue #136. Post-multi-user we key on
     // account_id (not user_id) since teammates inside the same account
     // all share one config; the conflict is between accounts.
-    const { data: claimed, error: claimedError } = await supabaseAdmin()
-      .from('whatsapp_config')
-      .select('account_id')
-      .eq('phone_number_id', phone_number_id)
-      .neq('account_id', accountId)
-      .maybeSingle()
+    let claimed = null
+    try {
+      const { data, error: claimedError } = await supabaseAdmin()
+        .from('whatsapp_config')
+        .select('account_id')
+        .eq('phone_number_id', phone_number_id)
+        .neq('account_id', accountId)
+        .maybeSingle()
 
-    if (claimedError) {
-      console.error('Error checking phone_number_id ownership:', claimedError)
-      return NextResponse.json(
-        { error: t('whatsappConfig.validateFailed') },
-        { status: 500 }
-      )
+      if (claimedError) {
+        console.warn('Could not verify phone_number_id uniqueness via admin client (falling back to database constraint):', claimedError.message)
+      } else {
+        claimed = data
+      }
+    } catch (adminErr) {
+      console.warn('supabaseAdmin lookup failed:', adminErr)
     }
 
     if (claimed) {
@@ -517,6 +520,12 @@ export async function POST(request: Request) {
 
       if (updateError) {
         console.error('Error updating whatsapp_config:', updateError)
+        if (updateError.code === '23505') {
+          return NextResponse.json(
+            { error: t('whatsappConfig.numberLinkedElsewhere') },
+            { status: 409 }
+          )
+        }
         return NextResponse.json(
           { error: t('whatsappConfig.updateFailed') },
           { status: 500 }
@@ -537,6 +546,12 @@ export async function POST(request: Request) {
 
       if (insertError) {
         console.error('Error inserting whatsapp_config:', insertError)
+        if (insertError.code === '23505') {
+          return NextResponse.json(
+            { error: t('whatsappConfig.numberLinkedElsewhere') },
+            { status: 409 }
+          )
+        }
         return NextResponse.json(
           { error: t('whatsappConfig.saveFailed') },
           { status: 500 }
