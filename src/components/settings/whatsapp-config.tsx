@@ -875,6 +875,13 @@ export function WhatsAppConfig() {
                   <Copy className="size-4" />
                 </Button>
               </div>
+              <div className="rounded-md border border-border/60 bg-muted/40 p-3 text-xs text-muted-foreground space-y-1 mt-3">
+                <p className="font-medium text-foreground flex items-center gap-1.5">
+                  <Zap className="size-3.5 text-primary" />
+                  {t('coexistenceTitle')}
+                </p>
+                <p>{t('coexistenceDesc')}</p>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -1047,7 +1054,24 @@ export function WhatsAppConfig() {
                     <li>{t('step4_2')}</li>
                     <li dangerouslySetInnerHTML={{ __html: t.raw('step4_3') }} />
                     <li dangerouslySetInnerHTML={{ __html: t.raw('step4_4') }} />
-                    <li>{t('step4_5')}</li>
+                    <li dangerouslySetInnerHTML={{ __html: t.raw('step4_5') }} />
+                  </ol>
+                </AccordionContent>
+              </AccordionItem>
+
+              <AccordionItem className="border-border">
+                <AccordionTrigger className="text-muted-foreground hover:text-foreground hover:no-underline">
+                  <span className="flex items-center gap-2">
+                    <span className="flex size-5 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">5</span>
+                    {t('step5')}
+                  </span>
+                </AccordionTrigger>
+                <AccordionContent className="text-muted-foreground">
+                  <ol className="list-decimal list-inside space-y-1 text-sm">
+                    <li>{t('step5_1')}</li>
+                    <li>{t('step5_2')}</li>
+                    <li dangerouslySetInnerHTML={{ __html: t.raw('step5_3') }} />
+                    <li>{t('step5_4')}</li>
                   </ol>
                 </AccordionContent>
               </AccordionItem>

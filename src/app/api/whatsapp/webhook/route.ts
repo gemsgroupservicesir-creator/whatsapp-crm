@@ -1,13 +1,14 @@
 import { NextResponse, after } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
-import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
+import { getMediaUrl } from '@/lib/whatsapp/meta-api'
 import { mirrorInboundMedia } from '@/lib/whatsapp/mirror-inbound-media'
 import { normalizePhone } from '@/lib/whatsapp/phone-utils'
 import {
   hasUsableIdentity,
   identityDisplayName,
   resolveInboundIdentity,
+  resolveEchoIdentity,
   type WaContactPayload,
   type WaIdentity,
 } from '@/lib/whatsapp/wa-identity'
@@ -31,7 +32,10 @@ import {
   handleTemplateWebhookChange,
   isTemplateWebhookField,
 } from '@/lib/whatsapp/template-webhook'
-import { applyMessageStatus } from '@/lib/whatsapp/message-status-sync'
+import {
+  applyMessageStatus,
+  applyPendingMessageStatuses,
+} from '@/lib/whatsapp/message-status-sync'
 
 // The `after()` callback in POST runs within this route's max duration.
 // Inbound processing can fan out to per-media Meta verification calls, so
@@ -122,6 +126,35 @@ interface MetaError {
   href?: string
 }
 
+export interface WhatsAppMessageEcho {
+  id: string
+  from?: string
+  to?: string
+  to_user_id?: string
+  to_parent_user_id?: string
+  recipient_id?: string
+  timestamp: string
+  type: string
+  text?: { body: string }
+  image?: { id: string; mime_type: string; caption?: string }
+  video?: { id: string; mime_type: string; caption?: string }
+  document?: { id: string; mime_type: string; filename?: string; caption?: string }
+  audio?: { id: string; mime_type: string }
+  sticker?: { id: string; mime_type: string }
+  location?: { latitude: number; longitude: number; name?: string; address?: string }
+  reaction?: { message_id: string; emoji: string }
+  context?: { id: string }
+  revoke?: { original_message_id: string }
+  edit?: {
+    original_message_id: string
+    message?: {
+      type?: string
+      text?: { body: string }
+    }
+  }
+  errors?: MetaError[]
+}
+
 interface WhatsAppWebhookEntry {
   id: string
   changes: Array<{
@@ -139,17 +172,19 @@ interface WhatsAppWebhookEntry {
         parent_user_id?: string
       }>
       messages?: WhatsAppMessage[]
+      message_echoes?: WhatsAppMessageEcho[]
+      smb_message_echoes?: WhatsAppMessageEcho[]
       statuses?: Array<{
         id: string
         status: string
         timestamp: string
         recipient_id: string
         /**
-         * Only present when `status === 'failed'`. Meta's reason for the
-         * failure — `code` is a stable numeric error code (e.g. 131049),
-         * `title` a short label, `error_data.details` the human-readable
-         * explanation. See #535.
-         */
+          * Only present when `status === 'failed'`. Meta's reason for the
+          * failure — `code` is a stable numeric error code (e.g. 131049),
+          * `title` a short label, `error_data.details` the human-readable
+          * explanation. See #535.
+          */
         errors?: MetaError[]
       }>
     }
@@ -317,6 +352,54 @@ function metaTimestampToIso(timestamp: string): string | null {
   return Number.isFinite(seconds) ? new Date(seconds * 1000).toISOString() : null
 }
 
+async function findConfigForPhoneNumber(
+  phoneNumberId: string | undefined
+): Promise<{
+  account_id: string
+  user_id: string
+  access_token: string
+  mirror_inbound_media?: boolean
+} | null> {
+  if (!phoneNumberId) return null
+
+  // Find user's config by phone_number_id. `.single()` returns
+  // PGRST116 for both 0 rows AND ≥2 rows — distinguish them so
+  // operators see the real cause in logs. ≥2 rows shouldn't happen
+  // post-migration 013 (UNIQUE constraint), but a row created
+  // before the constraint, or a race, would still surface here.
+  const { data: configRows, error: configError } = await supabaseAdmin()
+    .from('whatsapp_config')
+    .select('*')
+    .eq('phone_number_id', phoneNumberId)
+
+  if (configError) {
+    console.error(
+      'Error fetching whatsapp_config for phone_number_id:',
+      phoneNumberId,
+      configError
+    )
+    return null
+  }
+
+  if (!configRows || configRows.length === 0) {
+    console.error('No config found for phone_number_id:', phoneNumberId)
+    return null
+  }
+
+  if (configRows.length > 1) {
+    console.error(
+      `Multiple configs (${configRows.length}) found for phone_number_id:`,
+      phoneNumberId,
+      '— message dropped. Resolve duplicates so each number maps to a single account.',
+      'Account owners:',
+      configRows.map((r: { account_id: string; user_id: string }) => `${r.account_id} (admin ${r.user_id})`)
+    )
+    return null
+  }
+
+  return configRows[0]
+}
+
 async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
   if (!body.entry) return
 
@@ -354,47 +437,39 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
         }
       }
 
+      // Handle message echoes (WhatsApp Coexistence: smb_message_echoes / message_echoes)
+      const echoes = value.message_echoes || value.smb_message_echoes
+      if (
+        (change.field === 'smb_message_echoes' ||
+          change.field === 'message_echoes' ||
+          !!echoes) &&
+        echoes &&
+        echoes.length > 0
+      ) {
+        const config = await findConfigForPhoneNumber(value.metadata?.phone_number_id)
+        if (config) {
+          const decryptedAccessToken = decrypt(config.access_token)
+          for (let i = 0; i < echoes.length; i++) {
+            const echo = echoes[i]
+            const contact = value.contacts?.[i] || value.contacts?.[0]
+            await processMessageEcho(
+              echo,
+              contact,
+              config.account_id,
+              config.user_id,
+              decryptedAccessToken,
+              config.mirror_inbound_media !== false
+            )
+          }
+        }
+        continue
+      }
+
       // Handle incoming messages
       if (!value.messages || !value.contacts) continue
 
-      const phoneNumberId = value.metadata.phone_number_id
-
-      // Find user's config by phone_number_id. `.single()` returns
-      // PGRST116 for both 0 rows AND ≥2 rows — distinguish them so
-      // operators see the real cause in logs. ≥2 rows shouldn't happen
-      // post-migration 013 (UNIQUE constraint), but a row created
-      // before the constraint, or a race, would still surface here.
-      const { data: configRows, error: configError } = await supabaseAdmin()
-        .from('whatsapp_config')
-        .select('*')
-        .eq('phone_number_id', phoneNumberId)
-
-      if (configError) {
-        console.error(
-          'Error fetching whatsapp_config for phone_number_id:',
-          phoneNumberId,
-          configError
-        )
-        continue
-      }
-
-      if (!configRows || configRows.length === 0) {
-        console.error('No config found for phone_number_id:', phoneNumberId)
-        continue
-      }
-
-      if (configRows.length > 1) {
-        console.error(
-          `Multiple configs (${configRows.length}) found for phone_number_id:`,
-          phoneNumberId,
-          '— inbound message dropped. Resolve duplicates so each number maps to a single account.',
-          'Account owners:',
-          configRows.map((r: { account_id: string; user_id: string }) => `${r.account_id} (admin ${r.user_id})`)
-        )
-        continue
-      }
-
-      const config = configRows[0]
+      const config = await findConfigForPhoneNumber(value.metadata?.phone_number_id)
+      if (!config) continue
 
       const decryptedAccessToken = decrypt(config.access_token)
 
@@ -958,6 +1033,271 @@ async function processMessage(
     content_type: contentType,
     text: contentText,
   })
+}
+
+/**
+ * Persist an echo reaction from WhatsApp Business app.
+ */
+async function handleEchoReaction(
+  echo: WhatsAppMessageEcho,
+  conversationId: string,
+  actorId: string
+) {
+  const reaction = echo.reaction
+  if (!reaction?.message_id) return
+
+  const targetInternalId = await lookupInternalIdByMetaId(
+    reaction.message_id,
+    conversationId
+  )
+  if (!targetInternalId) {
+    console.warn(
+      '[webhook] echo reaction target message not found; skipping',
+      reaction.message_id
+    )
+    return
+  }
+
+  // Empty emoji = removal (per Meta's Cloud API spec).
+  if (!reaction.emoji) {
+    const { error: delError } = await supabaseAdmin()
+      .from('message_reactions')
+      .delete()
+      .eq('message_id', targetInternalId)
+      .eq('actor_type', 'agent')
+      .eq('actor_id', actorId)
+    if (delError) {
+      console.error('[webhook] echo reaction delete failed:', delError.message)
+    }
+    return
+  }
+
+  const { error: upsertError } = await supabaseAdmin()
+    .from('message_reactions')
+    .upsert(
+      {
+        message_id: targetInternalId,
+        conversation_id: conversationId,
+        actor_type: 'agent',
+        actor_id: actorId,
+        emoji: reaction.emoji,
+      },
+      { onConflict: 'message_id,actor_type,actor_id' }
+    )
+  if (upsertError) {
+    console.error('[webhook] echo reaction upsert failed:', upsertError.message)
+  }
+}
+
+/**
+ * Process an outbound message echo from the WhatsApp Business mobile app
+ * (WhatsApp Coexistence / smb_message_echoes webhook).
+ *
+ * Ensures all team members see outgoing messages and replies sent by agents
+ * using their phones in real time inside WACRM's shared inbox.
+ */
+async function processMessageEcho(
+  echo: WhatsAppMessageEcho,
+  contact: WaContactPayload | undefined,
+  accountId: string,
+  configOwnerUserId: string,
+  accessToken: string,
+  mirrorMedia: boolean
+) {
+  // Revoke handling (message deleted by agent from WhatsApp Business mobile app)
+  if (echo.type === 'revoke' || echo.revoke) {
+    const originalWamid = echo.revoke?.original_message_id || echo.id
+    if (originalWamid) {
+      const { error: revokeErr } = await supabaseAdmin()
+        .from('messages')
+        .update({
+          content_text: 'This message was deleted',
+          media_url: null,
+          media_type: null,
+        })
+        .eq('message_id', originalWamid)
+      if (revokeErr) {
+        console.error('[webhook] Error revoking message echo:', revokeErr.message)
+      } else {
+        console.info('[webhook] Message revoked from WhatsApp Business app:', originalWamid)
+      }
+    }
+    return
+  }
+
+  // Edit handling (message edited by agent from WhatsApp Business mobile app)
+  if (echo.type === 'edit' || echo.edit) {
+    const originalWamid = echo.edit?.original_message_id || echo.id
+    const newText = echo.edit?.message?.text?.body ?? echo.text?.body ?? ''
+    if (originalWamid && newText) {
+      const { error: editErr } = await supabaseAdmin()
+        .from('messages')
+        .update({
+          content_text: newText,
+        })
+        .eq('message_id', originalWamid)
+      if (editErr) {
+        console.error('[webhook] Error editing message echo:', editErr.message)
+      } else {
+        console.info('[webhook] Message edited from WhatsApp Business app:', originalWamid)
+      }
+    }
+    return
+  }
+
+  // Resolve customer recipient identity
+  const identity = resolveEchoIdentity(echo, contact)
+  if (!hasUsableIdentity(identity)) {
+    console.error(
+      '[webhook] message echo carries neither a phone number nor a BSUID; skipping:',
+      echo.id
+    )
+    return
+  }
+
+  // Find or create recipient contact
+  const contactOutcome = await findOrCreateContact(
+    accountId,
+    configOwnerUserId,
+    identity
+  )
+  if (!contactOutcome) return
+  const contactRecord = contactOutcome.contact
+
+  // Find or create conversation
+  const convResult = await findOrCreateConversation(
+    accountId,
+    configOwnerUserId,
+    contactRecord.id
+  )
+  if (!convResult) return
+  const conversation = convResult.conversation
+
+  if (convResult.created) {
+    await dispatchWebhookEvent(supabaseAdmin(), accountId, 'conversation.created', {
+      conversation_id: conversation.id,
+      contact_id: contactRecord.id,
+    })
+  }
+
+  // Handle echo reactions
+  if (echo.type === 'reaction') {
+    await handleEchoReaction(echo, conversation.id, configOwnerUserId)
+    return
+  }
+
+  // Parse message content
+  const {
+    contentText,
+    mediaUrl,
+    mediaType,
+    errorCode,
+    errorTitle,
+    errorDetails,
+  } = await parseMessageContent(
+    echo as unknown as WhatsAppMessage,
+    accessToken,
+    mirrorMedia ? { accountId } : null
+  )
+
+  // Resolve swipe-reply parent
+  let replyToInternalId: string | null = null
+  if (echo.context?.id) {
+    replyToInternalId = await lookupInternalIdByMetaId(
+      echo.context.id,
+      conversation.id
+    )
+  }
+
+  const ALLOWED_CONTENT_TYPES = new Set([
+    'text', 'image', 'document', 'audio', 'video',
+    'location', 'template', 'interactive',
+  ])
+  const contentType = ALLOWED_CONTENT_TYPES.has(echo.type)
+    ? echo.type
+    : echo.type === 'sticker'
+      ? 'image'
+      : 'text'
+
+  const sentAt = metaTimestampToIso(echo.timestamp) ?? new Date().toISOString()
+
+  // Idempotent upsert into messages:
+  // If this message was sent from WACRM (via sendMessageToWhatsApp), the row already exists with message_id.
+  // ignoreDuplicates makes this a no-op when message already exists.
+  const { data: insertedRows, error: msgError } = await supabaseAdmin()
+    .from('messages')
+    .upsert(
+      {
+        conversation_id: conversation.id,
+        sender_type: 'agent',
+        content_type: contentType,
+        content_text: contentText,
+        media_url: mediaUrl,
+        media_type: mediaType,
+        message_id: echo.id,
+        status: 'sent',
+        created_at: sentAt,
+        reply_to_message_id: replyToInternalId,
+        error_code: errorCode,
+        error_title: errorTitle,
+        error_details: errorDetails,
+      },
+      { onConflict: 'conversation_id,message_id', ignoreDuplicates: true }
+    )
+    .select('id')
+
+  if (msgError) {
+    console.error('[webhook] Error inserting message echo:', msgError)
+    return
+  }
+
+  if (!insertedRows || insertedRows.length === 0) {
+    console.info(
+      '[webhook] duplicate message echo ignored (idempotent replay or already sent from CRM):',
+      echo.id
+    )
+    return
+  }
+
+  // Apply any buffered/pending status updates that arrived before this echo
+  await applyPendingMessageStatuses(supabaseAdmin(), accountId, echo.id)
+
+  // Update conversation last message info (does NOT increment unread_count)
+  const lastMessageText = contentText || `[${echo.type}]`
+  const { error: convUpdateError } = await supabaseAdmin()
+    .from('conversations')
+    .update({
+      last_message_text: lastMessageText,
+      last_message_at: sentAt,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', conversation.id)
+
+  if (convUpdateError) {
+    console.error('[webhook] Error updating conversation on echo:', convUpdateError)
+  }
+
+  // Pause active Flows for this contact — human agent stepped in via WhatsApp Business mobile app
+  try {
+    const { error: pauseErr } = await supabaseAdmin()
+      .from('flow_runs')
+      .update({
+        status: 'paused_by_agent',
+        ended_at: new Date().toISOString(),
+        end_reason: 'agent_replied',
+      })
+      .eq('account_id', accountId)
+      .eq('contact_id', contactRecord.id)
+      .eq('status', 'active')
+    if (pauseErr) {
+      console.error('[flows] pause-on-echo-send failed:', pauseErr.message)
+    }
+  } catch (err) {
+    console.error(
+      '[flows] pause-on-echo-send threw:',
+      err instanceof Error ? err.message : err
+    )
+  }
 }
 
 async function parseMessageContent(

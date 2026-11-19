@@ -60,9 +60,9 @@ export function PresenceHeartbeat() {
         p_status: currentStatus(),
       });
       if (error && !cancelled) {
-        // Non-fatal: presence is best-effort. Log once per failure so a
-        // misconfigured RPC is visible without spamming.
-        console.error("[PresenceHeartbeat] touch_presence failed:", error.message);
+        // Non-fatal: presence is best-effort. Log as warning once so dev overlay
+        // doesn't block the screen while keeping it visible in the console.
+        console.warn("[PresenceHeartbeat] touch_presence failed:", error.message);
       }
     };
 

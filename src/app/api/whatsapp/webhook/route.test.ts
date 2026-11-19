@@ -43,6 +43,9 @@ const h = vi.hoisted(() => ({
     broadcastRecipient: null as { id: string; status: string } | null,
     /** Patches applied to that broadcast_recipients row. */
     recipientUpdates: [] as Record<string, unknown>[],
+    messageUpdates: [] as { patch: Record<string, unknown>; eqVal: unknown }[],
+    flowRunUpdates: [] as Record<string, unknown>[],
+    conversationUpdates: [] as Record<string, unknown>[],
   },
 }))
 
@@ -94,8 +97,9 @@ vi.mock('@supabase/supabase-js', () => ({
                 }),
               }),
             }),
-            update: () => ({
-              eq: () => ({
+            update: (patch?: Record<string, unknown>) => {
+              if (patch) h.state.conversationUpdates.push(patch)
+              const eqFn = () => ({
                 is: () => ({
                   select: () => {
                     h.state.firstInboundClaims++
@@ -107,8 +111,15 @@ vi.mock('@supabase/supabase-js', () => ({
                     })
                   },
                 }),
-              }),
-            }),
+                then: (resolve: (val: unknown) => void) =>
+                  resolve({ data: null, error: null }),
+              })
+              return {
+                eq: eqFn,
+                then: (resolve: (val: unknown) => void) =>
+                  resolve({ data: null, error: null }),
+              }
+            },
           }
         case 'broadcast_recipients':
           return {
@@ -204,6 +215,25 @@ vi.mock('@supabase/supabase-js', () => ({
                   }),
               }
             },
+            update: (patch: Record<string, unknown>) => ({
+              eq: (_col: string, val: unknown) => {
+                h.state.messageUpdates.push({ patch, eqVal: val })
+                return Promise.resolve({ data: null, error: null })
+              },
+            }),
+          }
+        case 'flow_runs':
+          return {
+            update: (patch: Record<string, unknown>) => ({
+              eq: () => ({
+                eq: () => ({
+                  eq: () => {
+                    h.state.flowRunUpdates.push(patch)
+                    return Promise.resolve({ data: null, error: null })
+                  },
+                }),
+              }),
+            }),
           }
         default:
           throw new Error(`unexpected table: ${table}`)
@@ -275,6 +305,7 @@ vi.mock('@/lib/webhooks/deliver', () => ({
 }))
 vi.mock('@/lib/whatsapp/message-status-sync', () => ({
   applyMessageStatus: h.applyMessageStatus,
+  applyPendingMessageStatuses: vi.fn(),
 }))
 
 import { POST } from './route'
@@ -360,6 +391,40 @@ async function runStatusWebhook(status: Record<string, unknown>) {
   return res
 }
 
+function echoRequest(
+  echoes: Record<string, unknown>[],
+  field: string = 'smb_message_echoes',
+  contacts: Record<string, unknown>[] = LEGACY_CONTACTS,
+) {
+  const body = {
+    entry: [
+      {
+        changes: [
+          {
+            field,
+            value: {
+              metadata: { phone_number_id: 'pn-1' },
+              contacts,
+              message_echoes: echoes,
+            },
+          },
+        ],
+      },
+    ],
+  }
+  return signedPost(JSON.stringify(body))
+}
+
+async function runEchoWebhook(
+  echoes: Record<string, unknown>[],
+  field?: string,
+  contacts?: Record<string, unknown>[],
+) {
+  const res = await POST(echoRequest(echoes, field, contacts))
+  for (const cb of h.state.afterCallbacks) await cb()
+  return res
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   h.state.messageUpsertResult = [{ id: 'msg-1' }]
@@ -381,6 +446,9 @@ beforeEach(() => {
   h.state.whatsappConfigLookups = []
   h.state.broadcastRecipient = null
   h.state.recipientUpdates = []
+  h.state.messageUpdates = []
+  h.state.flowRunUpdates = []
+  h.state.conversationUpdates = []
   mockFindExistingContact.mockResolvedValue({
     id: 'contact-1',
     name: 'Ada',
@@ -1227,5 +1295,152 @@ describe('inbound webhook: first_inbound_message fires once', () => {
     h.state.messageUpsertResult = []
     await runWebhook()
     expect(h.state.firstInboundClaims).toBe(0)
+  })
+})
+
+describe('WhatsApp Coexistence: smb_message_echoes & message_echoes', () => {
+  const ECHO_TEXT = {
+    id: 'wamid.ECHO1',
+    from: '15550009999',
+    to: '15551230000',
+    timestamp: '1700000000',
+    type: 'text',
+    text: { body: 'Hello from WhatsApp Business app!' },
+  }
+
+  it('inserts outbound message with sender_type: "agent" and status: "sent"', async () => {
+    const res = await runEchoWebhook([ECHO_TEXT])
+    expect((res as { init?: { status?: number } }).init?.status).toBe(200)
+
+    expect(h.state.upsertCalls).toHaveLength(1)
+    expect(h.state.upsertCalls[0].row).toMatchObject({
+      sender_type: 'agent',
+      content_type: 'text',
+      content_text: 'Hello from WhatsApp Business app!',
+      message_id: 'wamid.ECHO1',
+      status: 'sent',
+    })
+
+    // Conversation last message updated
+    expect(h.state.conversationUpdates).toHaveLength(1)
+    expect(h.state.conversationUpdates[0]).toMatchObject({
+      last_message_text: 'Hello from WhatsApp Business app!',
+    })
+  })
+
+  it('supports field: "message_echoes" as well as "smb_message_echoes"', async () => {
+    await runEchoWebhook([ECHO_TEXT], 'message_echoes')
+
+    expect(h.state.upsertCalls).toHaveLength(1)
+    expect(h.state.upsertCalls[0].row).toMatchObject({
+      sender_type: 'agent',
+      message_id: 'wamid.ECHO1',
+    })
+  })
+
+  it('supports recipient BSUID when customer has no phone number', async () => {
+    mockFindExistingContact.mockResolvedValueOnce(null)
+    h.state.contactByWaUserId = {
+      id: 'contact-bsuid',
+      name: 'Sheena',
+      wa_user_id: 'US.13491208655302741918',
+    }
+
+    const bsuidEcho = {
+      id: 'wamid.ECHOU1',
+      from: '15550009999',
+      to_user_id: 'US.13491208655302741918',
+      timestamp: '1700000000',
+      type: 'text',
+      text: { body: 'Hello BSUID user' },
+    }
+
+    await runEchoWebhook([bsuidEcho], 'smb_message_echoes', [
+      {
+        user_id: 'US.13491208655302741918',
+        profile: { name: 'Sheena' },
+      },
+    ])
+
+    expect(h.state.upsertCalls).toHaveLength(1)
+    expect(h.state.upsertCalls[0].row).toMatchObject({
+      sender_type: 'agent',
+      content_text: 'Hello BSUID user',
+      message_id: 'wamid.ECHOU1',
+    })
+  })
+
+  it('ignores duplicate echoes (idempotency: already sent via CRM or replayed)', async () => {
+    h.state.messageUpsertResult = [] // Simulates row conflict / already exists
+    await runEchoWebhook([ECHO_TEXT])
+
+    // Upsert attempted with ignoreDuplicates
+    expect(h.state.upsertCalls).toHaveLength(1)
+    expect(h.state.upsertCalls[0].options).toMatchObject({
+      onConflict: 'conversation_id,message_id',
+      ignoreDuplicates: true,
+    })
+    // Downstream conversation update skipped on duplicate
+    expect(h.state.conversationUpdates).toHaveLength(0)
+  })
+
+  it('handles message revoke from mobile app (deletes message content)', async () => {
+    const revokeEcho = {
+      id: 'wamid.REVOKE1',
+      timestamp: '1700000000',
+      type: 'revoke',
+      revoke: { original_message_id: 'wamid.ORIG1' },
+    }
+
+    await runEchoWebhook([revokeEcho])
+
+    expect(h.state.messageUpdates).toHaveLength(1)
+    expect(h.state.messageUpdates[0]).toEqual({
+      patch: {
+        content_text: 'This message was deleted',
+        media_url: null,
+        media_type: null,
+      },
+      eqVal: 'wamid.ORIG1',
+    })
+    // No new message row inserted
+    expect(h.state.upsertCalls).toHaveLength(0)
+  })
+
+  it('handles message edit from mobile app (updates message content)', async () => {
+    const editEcho = {
+      id: 'wamid.EDIT1',
+      timestamp: '1700000000',
+      type: 'edit',
+      edit: {
+        original_message_id: 'wamid.ORIG1',
+        message: {
+          type: 'text',
+          text: { body: 'Edited message text' },
+        },
+      },
+    }
+
+    await runEchoWebhook([editEcho])
+
+    expect(h.state.messageUpdates).toHaveLength(1)
+    expect(h.state.messageUpdates[0]).toEqual({
+      patch: {
+        content_text: 'Edited message text',
+      },
+      eqVal: 'wamid.ORIG1',
+    })
+    // No new message row inserted
+    expect(h.state.upsertCalls).toHaveLength(0)
+  })
+
+  it('pauses active flow runs when agent replies from mobile app', async () => {
+    await runEchoWebhook([ECHO_TEXT])
+
+    expect(h.state.flowRunUpdates).toHaveLength(1)
+    expect(h.state.flowRunUpdates[0]).toMatchObject({
+      status: 'paused_by_agent',
+      end_reason: 'agent_replied',
+    })
   })
 })

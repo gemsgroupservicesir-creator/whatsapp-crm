@@ -52,6 +52,15 @@ export interface WaMessageIdentityPayload {
   from_parent_user_id?: string
 }
 
+/** The recipient identity fields on an echo entry (from `message_echoes` or `smb_message_echoes`). */
+export interface WaEchoIdentityPayload {
+  /** Recipient customer phone number. */
+  to?: string
+  to_user_id?: string
+  to_parent_user_id?: string
+  recipient_id?: string
+}
+
 export interface WaIdentity {
   /** Digits-only phone, or `''` when Meta withheld it. */
   phone: string
@@ -115,6 +124,28 @@ export function resolveInboundIdentity(
     waUserId: cleanBsuid(message.from_user_id) ?? cleanBsuid(contact?.user_id),
     waParentUserId:
       cleanBsuid(message.from_parent_user_id) ??
+      cleanBsuid(contact?.parent_user_id),
+    waUsername: cleanUsername(contact?.profile?.username),
+    name: contact?.profile?.name?.trim() ?? '',
+  }
+}
+
+/**
+ * Resolve the customer contact identity from an outgoing message echo.
+ *
+ * On outbound echo events (WhatsApp Coexistence / smb_message_echoes),
+ * `to` (or `to_user_id` / `recipient_id`) identifies the customer recipient,
+ * while `from` is the business's own phone number.
+ */
+export function resolveEchoIdentity(
+  echo: WaEchoIdentityPayload,
+  contact?: WaContactPayload
+): WaIdentity {
+  return {
+    phone: normalizePhone(echo.to ?? echo.recipient_id ?? contact?.wa_id ?? ''),
+    waUserId: cleanBsuid(echo.to_user_id) ?? cleanBsuid(contact?.user_id),
+    waParentUserId:
+      cleanBsuid(echo.to_parent_user_id) ??
       cleanBsuid(contact?.parent_user_id),
     waUsername: cleanUsername(contact?.profile?.username),
     name: contact?.profile?.name?.trim() ?? '',

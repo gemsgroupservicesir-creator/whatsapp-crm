@@ -5,6 +5,7 @@ import {
   identityDisplayName,
   isBusinessScopedUserId,
   resolveContactSendTarget,
+  resolveEchoIdentity,
   resolveInboundIdentity,
 } from './wa-identity'
 
@@ -257,5 +258,55 @@ describe('contactHandle', () => {
   it('is empty only when the contact carries no identity at all', () => {
     expect(contactHandle({})).toBe('')
     expect(contactHandle({ phone: null, wa_username: null, wa_user_id: null })).toBe('')
+  })
+})
+
+describe('resolveEchoIdentity', () => {
+  it('resolves recipient phone from echo.to', () => {
+    expect(resolveEchoIdentity({ to: '15551230000' }, LEGACY_CONTACT)).toEqual({
+      phone: '15551230000',
+      waUserId: null,
+      waParentUserId: null,
+      waUsername: null,
+      name: 'Ada',
+    })
+  })
+
+  it('resolves recipient BSUID from echo.to_user_id', () => {
+    expect(
+      resolveEchoIdentity(
+        {
+          to_user_id: 'US.13491208655302741918',
+          to_parent_user_id: 'US.ENT.11815799212886844830',
+        },
+        USERNAME_ONLY_CONTACT
+      )
+    ).toEqual({
+      phone: '',
+      waUserId: 'US.13491208655302741918',
+      waParentUserId: 'US.ENT.11815799212886844830',
+      waUsername: 'realsheenanelson',
+      name: 'Sheena Nelson',
+    })
+  })
+
+  it('resolves phone even when contacts array is absent in echo webhook', () => {
+    expect(resolveEchoIdentity({ to: '+1 (555) 123-0000' })).toEqual({
+      phone: '15551230000',
+      waUserId: null,
+      waParentUserId: null,
+      waUsername: null,
+      name: '',
+    })
+  })
+
+  it('supports recipient_id as fallback', () => {
+    expect(resolveEchoIdentity({ recipient_id: '15551230000' })).toEqual({
+      phone: '15551230000',
+      waUserId: null,
+      waParentUserId: null,
+      waUsername: null,
+      name: '',
+    })
   })
 })
