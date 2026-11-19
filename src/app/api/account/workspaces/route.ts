@@ -133,6 +133,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ workspace: rpcData });
     }
 
+    if (rpcError) {
+      console.warn("[POST /api/account/workspaces] RPC failed, falling back to admin client:", rpcError);
+    }
+
     // Fallback via Admin Client
     const admin = supabaseAdmin();
 
@@ -148,30 +152,37 @@ export async function POST(request: Request) {
     if (accError) {
       console.error("[POST /api/account/workspaces] create error:", accError);
       return NextResponse.json(
-        { error: accError.message.includes("unique") ? "Please run the migration to enable multiple workspaces" : "Failed to create workspace" },
+        { error: accError.message || "Failed to create workspace" },
         { status: 500 }
       );
     }
 
-    // Add to account_members if table exists
+    // Add to account_members
     try {
-      await admin.from("account_members").insert({
-        account_id: newAccount.id,
-        user_id: user.id,
-        role: "owner",
-      });
-    } catch {
-      // Table might not exist until migration runs; safe to ignore
+      await admin.from("account_members").upsert(
+        {
+          account_id: newAccount.id,
+          user_id: user.id,
+          role: "owner",
+        },
+        { onConflict: "account_id, user_id" }
+      );
+    } catch (e) {
+      console.warn("[POST /api/account/workspaces] account_members upsert:", e);
     }
 
     // Switch caller's active profile account_id
-    await admin
+    const { error: profError } = await admin
       .from("profiles")
       .update({
         account_id: newAccount.id,
         account_role: "owner",
       })
       .eq("user_id", user.id);
+
+    if (profError) {
+      console.error("[POST /api/account/workspaces] profile update error:", profError);
+    }
 
     return NextResponse.json({
       workspace: {
@@ -182,6 +193,7 @@ export async function POST(request: Request) {
       },
     });
   } catch (err) {
+    console.error("[POST /api/account/workspaces] unhandled exception:", err);
     return toErrorResponse(err);
   }
 }

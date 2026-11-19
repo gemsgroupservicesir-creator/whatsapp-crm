@@ -94,6 +94,7 @@ BEGIN
 END;
 $$;
 
+ALTER FUNCTION public.switch_active_account(UUID) OWNER TO postgres;
 GRANT EXECUTE ON FUNCTION public.switch_active_account(UUID) TO authenticated;
 
 -- 5. RPC to create a workspace and switch to it
@@ -141,6 +142,7 @@ BEGIN
 END;
 $$;
 
+ALTER FUNCTION public.create_workspace(TEXT) OWNER TO postgres;
 GRANT EXECUTE ON FUNCTION public.create_workspace(TEXT) TO authenticated;
 
 -- 6. RPC to list all accessible workspaces for the user
@@ -177,4 +179,5 @@ BEGIN
 END;
 $$;
 
+ALTER FUNCTION public.list_my_workspaces() OWNER TO postgres;
 GRANT EXECUTE ON FUNCTION public.list_my_workspaces() TO authenticated;

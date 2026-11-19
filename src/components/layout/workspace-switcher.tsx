@@ -9,6 +9,7 @@ import {
   Check,
   ChevronsUpDown,
   PlusCircle,
+  Plus,
   Loader2,
   Phone,
   Shield,
@@ -98,8 +99,7 @@ export function WorkspaceSwitcher() {
     }
   };
 
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleCreate = async () => {
     const name = newWorkspaceName.trim();
     if (!name || creating) return;
 
@@ -141,128 +141,154 @@ export function WorkspaceSwitcher() {
 
   return (
     <>
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          disabled={switching}
-          aria-label="Switch workspace"
-          className="flex w-full items-center justify-between gap-2 rounded-lg border border-border/70 bg-muted/40 p-2 text-left text-xs transition-colors hover:bg-muted/80 focus:outline-none focus:ring-1 focus:ring-ring"
-        >
-          <div className="flex min-w-0 items-center gap-2">
-            <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-              <Building2 className="size-4" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="truncate font-semibold text-foreground">
-                {currentWorkspace.name}
-              </p>
-              <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                {currentWorkspace.phone_number_id ? (
-                  <span className="flex items-center gap-1 text-emerald-400">
-                    <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                    Connected
-                  </span>
-                ) : (
-                  <span>No WhatsApp number</span>
-                )}
+      <div className="flex w-full items-center gap-1.5">
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            disabled={switching}
+            aria-label="Switch workspace"
+            className="flex min-w-0 flex-1 items-center justify-between gap-2 rounded-lg border border-border/70 bg-muted/40 p-2 text-left text-xs transition-colors hover:bg-muted/80 focus:outline-none focus:ring-1 focus:ring-ring"
+          >
+            <div className="flex min-w-0 items-center gap-2">
+              <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+                <Building2 className="size-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-semibold text-foreground">
+                  {currentWorkspace.name}
+                </p>
+                <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                  {currentWorkspace.phone_number_id ? (
+                    <span className="flex items-center gap-1 text-emerald-400">
+                      <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                      Connected
+                    </span>
+                  ) : (
+                    <span>No WhatsApp number</span>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
-          {switching ? (
-            <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground" />
-          ) : (
-            <ChevronsUpDown className="size-4 shrink-0 text-muted-foreground" />
-          )}
-        </DropdownMenuTrigger>
+            {switching ? (
+              <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground" />
+            ) : (
+              <ChevronsUpDown className="size-4 shrink-0 text-muted-foreground" />
+            )}
+          </DropdownMenuTrigger>
 
-        <DropdownMenuContent align="start" className="w-60">
-          <DropdownMenuLabel className="text-[11px] font-normal text-muted-foreground uppercase tracking-wider">
-            Workspaces & Numbers
-          </DropdownMenuLabel>
-          <DropdownMenuSeparator />
+          <DropdownMenuContent align="start" className="w-60">
+            <DropdownMenuLabel className="text-[11px] font-normal text-muted-foreground uppercase tracking-wider">
+              Workspaces & Numbers
+            </DropdownMenuLabel>
+            <DropdownMenuSeparator />
 
-          {workspaces.map((ws) => {
-            const isActive = ws.id === account?.id;
-            return (
-              <DropdownMenuItem
-                key={ws.id}
-                onClick={() => handleSwitch(ws.id)}
-                className="flex cursor-pointer items-center justify-between gap-2 py-2"
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium text-foreground">
-                    {ws.name}
-                  </p>
-                  <p className="truncate text-[10px] text-muted-foreground">
-                    {ws.phone_number_id ? (
-                      <span className="text-emerald-400">● WhatsApp Connected</span>
-                    ) : (
-                      "No number linked"
-                    )}
-                  </p>
-                </div>
-                {isActive && <Check className="size-4 shrink-0 text-primary" />}
-              </DropdownMenuItem>
-            );
-          })}
+            {workspaces.map((ws) => {
+              const isActive = ws.id === account?.id;
+              return (
+                <DropdownMenuItem
+                  key={ws.id}
+                  onClick={() => handleSwitch(ws.id)}
+                  className="flex cursor-pointer items-center justify-between gap-2 py-2"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-medium text-foreground">
+                      {ws.name}
+                    </p>
+                    <p className="truncate text-[10px] text-muted-foreground">
+                      {ws.phone_number_id ? (
+                        <span className="text-emerald-400">● WhatsApp Connected</span>
+                      ) : (
+                        "No number linked"
+                      )}
+                    </p>
+                  </div>
+                  {isActive && <Check className="size-4 shrink-0 text-primary" />}
+                </DropdownMenuItem>
+              );
+            })}
 
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            onClick={() => setDialogOpen(true)}
-            className="flex cursor-pointer items-center gap-2 text-primary focus:text-primary py-2 font-medium"
-          >
-            <PlusCircle className="size-4" />
-            Create Workspace / Number
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setTimeout(() => setDialogOpen(true), 100);
+              }}
+              className="flex cursor-pointer items-center gap-2 text-primary focus:text-primary py-2 font-medium"
+            >
+              <PlusCircle className="size-4" />
+              Create Workspace / Number
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <Button
+          type="button"
+          size="icon"
+          variant="outline"
+          onClick={() => setDialogOpen(true)}
+          title="Create New Workspace / Number"
+          aria-label="Create New Workspace"
+          className="size-11 shrink-0 rounded-lg border-border/70 bg-muted/40 text-muted-foreground hover:bg-muted/80 hover:text-foreground"
+        >
+          <Plus className="size-4" />
+        </Button>
+      </div>
 
       {/* Modal to create a new workspace */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="sm:max-w-md">
-          <form onSubmit={handleCreate}>
-            <DialogHeader>
-              <DialogTitle>Create New Workspace</DialogTitle>
-              <DialogDescription>
-                Create a dedicated workspace for a new WhatsApp number, department (e.g. Sales, Support), or agent.
-              </DialogDescription>
-            </DialogHeader>
+          <DialogHeader>
+            <DialogTitle>Create New Workspace</DialogTitle>
+            <DialogDescription>
+              Create a dedicated workspace for a new WhatsApp number, department (e.g. Sales, Support), or agent.
+            </DialogDescription>
+          </DialogHeader>
 
-            <div className="space-y-4 py-4">
-              <div className="space-y-2">
-                <Label htmlFor="workspace-name">Workspace Name</Label>
-                <Input
-                  id="workspace-name"
-                  placeholder="e.g. Sales Desk, Support Team, Admissions"
-                  value={newWorkspaceName}
-                  onChange={(e) => setNewWorkspaceName(e.target.value)}
-                  autoFocus
-                  disabled={creating}
-                  className="bg-muted border-border"
-                />
-              </div>
-            </div>
-
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setDialogOpen(false)}
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="workspace-name">Workspace Name</Label>
+              <Input
+                id="workspace-name"
+                placeholder="e.g. Sales Desk, Support Team, Admissions"
+                value={newWorkspaceName}
+                onChange={(e) => setNewWorkspaceName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleCreate();
+                  }
+                }}
+                autoFocus
                 disabled={creating}
-              >
-                Cancel
-              </Button>
-              <Button type="submit" disabled={creating || !newWorkspaceName.trim()}>
-                {creating ? (
-                  <>
-                    <Loader2 className="mr-2 size-4 animate-spin" />
-                    Creating...
-                  </>
-                ) : (
-                  "Create Workspace"
-                )}
-              </Button>
-            </DialogFooter>
-          </form>
+                className="bg-muted border-border"
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setDialogOpen(false)}
+              disabled={creating}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => handleCreate()}
+              disabled={creating || !newWorkspaceName.trim()}
+            >
+              {creating ? (
+                <>
+                  <Loader2 className="mr-2 size-4 animate-spin" />
+                  Creating...
+                </>
+              ) : (
+                "Create Workspace"
+              )}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </>
