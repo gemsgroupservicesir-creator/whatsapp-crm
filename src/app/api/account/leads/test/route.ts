@@ -44,24 +44,36 @@ export async function POST(request: Request) {
       fullName?: string;
       phone?: string;
       email?: string;
+      college?: string;
+      course?: string;
+      city?: string;
       formName?: string;
     } | null;
 
     const fullName = body?.fullName?.trim() || 'Test Meta Lead';
     const phone = body?.phone?.trim() || '+919876543210';
     const email = body?.email?.trim() || 'test.lead@example.com';
+    const college = body?.college?.trim() || 'Amity University';
+    const course = body?.course?.trim() || 'B.Tech Computer Science';
+    const city = body?.city?.trim() || 'New Delhi';
     const formName = body?.formName?.trim() || 'Sample Meta Instant Form';
 
     const result = await processIncomingLead(profile.account_id, {
       fullName,
       phone,
       email,
+      college,
+      course,
+      city,
       formName,
       leadgenId: `test_lead_${Date.now()}`,
       rawFields: {
         full_name: fullName,
         phone_number: phone,
         email: email,
+        college_name: college,
+        course_name: course,
+        city: city,
         simulated: 'true',
       },
     });

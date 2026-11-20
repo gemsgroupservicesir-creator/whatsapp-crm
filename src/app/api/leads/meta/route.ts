@@ -194,6 +194,37 @@ export async function POST(request: Request) {
         ? body.form_name
         : 'Meta Instant Form';
 
+    const college =
+      typeof body.college === 'string'
+        ? body.college
+        : typeof body.college_name === 'string'
+        ? body.college_name
+        : typeof body.university === 'string'
+        ? body.university
+        : typeof body.institute === 'string'
+        ? body.institute
+        : undefined;
+
+    const course =
+      typeof body.course === 'string'
+        ? body.course
+        : typeof body.course_name === 'string'
+        ? body.course_name
+        : typeof body.program === 'string'
+        ? body.program
+        : typeof body.degree === 'string'
+        ? body.degree
+        : undefined;
+
+    const city =
+      typeof body.city === 'string'
+        ? body.city
+        : typeof body.location === 'string'
+        ? body.location
+        : typeof body.state === 'string'
+        ? body.state
+        : undefined;
+
     if (phone) {
       let targetAccountId = queryAccountId;
       if (!targetAccountId) {
@@ -212,6 +243,9 @@ export async function POST(request: Request) {
           phone,
           email,
           formName,
+          college,
+          course,
+          city,
           leadgenId: typeof body.leadgen_id === 'string' ? body.leadgen_id : undefined,
           formId: typeof body.form_id === 'string' ? body.form_id : undefined,
           rawFields: body as Record<string, string>,

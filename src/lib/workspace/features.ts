@@ -20,6 +20,12 @@ export const WORKSPACE_FEATURES: WorkspaceFeature[] = [
     iconName: "Users",
   },
   {
+    id: "leads",
+    name: "Leads & Meta Ad Forms",
+    description: "Meta Instant Form leads, auto-assigner to agents, college & course tracking.",
+    iconName: "UserCheck",
+  },
+  {
     id: "pipelines",
     name: "Deals & Sales Pipelines",
     description: "Visual Kanban deal boards, revenue stages, and sales pipelines.",

@@ -17,6 +17,7 @@ const tablesWithoutDomainData = new Set([
   "account_members",
   "meta_lead_configs",
   "meta_lead_logs",
+  "lead_assignment_rules",
 ]);
 
 function accountScopedTables(): Set<string> {
