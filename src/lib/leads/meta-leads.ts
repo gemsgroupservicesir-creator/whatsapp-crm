@@ -105,8 +105,8 @@ export async function processIncomingLead(
 
   // 1. Sanitize phone
   const rawPhone = lead.phone.startsWith('+') ? lead.phone : `+${lead.phone.replace(/\D/g, '')}`;
-  const sanitized = parseInternationalPhone(rawPhone);
-  if (!sanitized) {
+  const sanitizedDigits = parseInternationalPhone(rawPhone);
+  if (!sanitizedDigits) {
     await admin.from('meta_lead_logs').insert({
       account_id: accountId,
       leadgen_id: lead.leadgenId || null,
@@ -121,6 +121,7 @@ export async function processIncomingLead(
     });
     return { success: false, error: 'Invalid phone number format' };
   }
+  const formattedPhone = `+${sanitizedDigits}`;
 
   // 2. Fetch Lead Configuration for this account
   const { data: config } = await admin
@@ -136,7 +137,7 @@ export async function processIncomingLead(
   try {
     const auditUserId = await resolveAuditUserId(admin, accountId);
     const contactResult = await findOrCreateContact(admin, accountId, auditUserId, {
-      phone: sanitized,
+      phone: formattedPhone,
       name: lead.fullName,
       email: lead.email,
     });
@@ -175,7 +176,7 @@ export async function processIncomingLead(
   // 4. Resolve or create conversation
   let conversationId: string | undefined;
   try {
-    const conv = await resolveConversationByPhone(admin, accountId, sanitized, lead.fullName);
+    const conv = await resolveConversationByPhone(admin, accountId, formattedPhone, lead.fullName);
     conversationId = conv.conversationId;
   } catch (err) {
     console.warn('[MetaLeads] Could not resolve conversation:', err);
@@ -210,7 +211,7 @@ export async function processIncomingLead(
     form_id: lead.formId || null,
     form_name: lead.formName || 'Meta Instant Form',
     full_name: lead.fullName,
-    phone: sanitized,
+    phone: formattedPhone,
     email: lead.email || null,
     raw_data: lead.rawFields || {},
     status: 'processed',
