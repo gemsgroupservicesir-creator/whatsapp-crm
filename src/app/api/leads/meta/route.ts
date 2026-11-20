@@ -5,6 +5,7 @@ import {
   processIncomingLead,
   type IncomingLeadPayload,
 } from '@/lib/leads/meta-leads';
+import { decrypt } from '@/lib/whatsapp/encryption';
 
 export const dynamic = 'force-dynamic';
 
@@ -119,6 +120,23 @@ export async function POST(request: Request) {
             if (!targetAccountId) {
               console.warn('[MetaWebhook] No target workspace found for leadgen:', leadgenId);
               continue;
+            }
+
+            // Fallback to whatsapp_config access_token if no page_access_token set
+            if (!pageAccessToken && targetAccountId) {
+              const { data: waCfg } = await admin
+                .from('whatsapp_config')
+                .select('access_token')
+                .eq('account_id', targetAccountId)
+                .maybeSingle();
+
+              if (waCfg?.access_token) {
+                try {
+                  pageAccessToken = decrypt(waCfg.access_token);
+                } catch {
+                  // Ignore decrypt errors
+                }
+              }
             }
 
             // If we have pageAccessToken, fetch real lead data from Meta
