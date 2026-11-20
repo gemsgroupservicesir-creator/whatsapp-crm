@@ -173,6 +173,11 @@ export function SettingsOverview({
       ),
     },
     {
+      section: 'leads',
+      loading: false,
+      subtitle: 'Facebook & Instagram Lead Ads',
+    },
+    {
       section: 'members',
       loading: countsLoading,
       subtitle:

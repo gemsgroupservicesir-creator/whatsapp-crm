@@ -20,6 +20,7 @@ import { InboxSettings } from '@/components/settings/inbox-settings';
 import { MembersTab } from '@/components/settings/members-tab';
 import { ApiKeysSettings } from '@/components/settings/api-keys-settings';
 import { WorkspaceFeaturesPanel } from '@/components/settings/workspace-features';
+import { MetaLeadsSettings } from '@/components/settings/meta-leads-settings';
 import { ShieldAlert } from 'lucide-react';
 import {
   SECTION_META,
@@ -81,6 +82,7 @@ function SettingsPageInner() {
     security: <SecurityPanel />,
     appearance: <AppearancePanel />,
     whatsapp: <WhatsAppConfig />,
+    leads: <MetaLeadsSettings />,
     templates: <TemplateManager />,
     'quick-replies': <QuickRepliesManager />,
     fields: <FieldsAndTagsPanel />,
