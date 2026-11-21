@@ -266,6 +266,30 @@ export default function LeadsPage() {
     }
   };
 
+  const [retryingId, setRetryingId] = useState<string | null>(null);
+
+  // Retry fetching lead details from Meta Graph API
+  const handleRetryFetch = async (leadId: string) => {
+    try {
+      setRetryingId(leadId);
+      const res = await fetch("/api/leads", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: leadId, action: "retry_fetch" }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to fetch lead details");
+      }
+      toast.success("Lead details fetched from Meta successfully!");
+      fetchLeads();
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to fetch lead");
+    } finally {
+      setRetryingId(null);
+    }
+  };
+
   // Save notes
   const handleSaveNotes = async () => {
     if (!selectedLead) return;
@@ -482,6 +506,36 @@ export default function LeadsPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Alert banner if Meta lead webhook arrived but needs valid token */}
+      {leads.some((l) => l.status === "token_required") && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+            <div className="text-xs">
+              <p className="font-semibold text-foreground">
+                Meta Lead Webhook Arrived! Reconnect Token to Reveal Student Details
+              </p>
+              <p className="text-muted-foreground mt-0.5">
+                Meta successfully delivered your test lead via webhook. However, Meta Graph API returned:{" "}
+                <span className="font-mono text-[11px] text-amber-700 dark:text-amber-300">
+                  &ldquo;Error validating access token: The session is invalid because the user logged out (Code 190)&rdquo;
+                </span>. Update your Token in{" "}
+                <Link href="/settings" className="underline font-semibold text-amber-600 dark:text-amber-400">
+                  Settings → WhatsApp / Meta Leads
+                </Link>{" "}
+                and click &ldquo;Retry Fetch&rdquo; to populate the student&apos;s name, phone, and form answers.
+              </p>
+            </div>
+          </div>
+          <Link href="/settings" className="shrink-0">
+            <Button size="sm" variant="outline" className="text-xs h-8 gap-1.5 border-amber-500/40 text-amber-600 hover:bg-amber-500/10 w-full sm:w-auto">
+              <Settings className="h-3.5 w-3.5" />
+              Update Token
+            </Button>
+          </Link>
+        </div>
+      )}
 
       {/* Tabs Navigation */}
       <div className="flex items-center justify-between border-b border-border">
@@ -791,14 +845,27 @@ export default function LeadsPage() {
                             {/* Contact info */}
                             <TableCell>
                               <div className="flex flex-col gap-0.5">
-                                <span className="font-semibold text-sm text-foreground">
-                                  {lead.full_name}
-                                </span>
-                                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                                  <span className="flex items-center gap-1">
-                                    <Phone className="h-3 w-3 text-muted-foreground" />
-                                    {lead.phone}
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-semibold text-sm text-foreground">
+                                    {lead.status === "token_required" ? "Meta Lead (Pending Token)" : lead.full_name}
                                   </span>
+                                  {lead.status === "token_required" && (
+                                    <Badge variant="outline" className="text-[10px] px-1 py-0 border-amber-500/50 text-amber-500 bg-amber-500/10">
+                                      Token Expired
+                                    </Badge>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                  {lead.phone === "Pending Token" ? (
+                                    <span className="text-[11px] text-amber-600 dark:text-amber-400 font-medium">
+                                      Needs Valid Token to reveal phone
+                                    </span>
+                                  ) : (
+                                    <span className="flex items-center gap-1">
+                                      <Phone className="h-3 w-3 text-muted-foreground" />
+                                      {lead.phone}
+                                    </span>
+                                  )}
                                   {lead.email && (
                                     <span className="flex items-center gap-1 truncate max-w-[150px]">
                                       <Mail className="h-3 w-3 text-muted-foreground" />
@@ -931,6 +998,20 @@ export default function LeadsPage() {
                             {/* Actions */}
                             <TableCell className="text-right">
                               <div className="flex items-center justify-end gap-1.5">
+                                {/* Retry fetch if token was missing or expired */}
+                                {lead.status === "token_required" && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => handleRetryFetch(lead.id)}
+                                    disabled={retryingId === lead.id}
+                                    className="h-8 gap-1 text-xs px-2.5 border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 cursor-pointer"
+                                  >
+                                    <RefreshCw className={cn("h-3.5 w-3.5", retryingId === lead.id && "animate-spin")} />
+                                    Retry Fetch
+                                  </Button>
+                                )}
+
                                 {/* Open WhatsApp Conversation */}
                                 {lead.conversation_id ? (
                                   <Link href={`/inbox?c=${lead.conversation_id}`}>

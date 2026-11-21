@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { toErrorResponse } from '@/lib/auth/account';
+import { fetchLeadFromMetaGraphApi, processIncomingLead } from '@/lib/leads/meta-leads';
+import { decrypt } from '@/lib/whatsapp/encryption';
 
 export const dynamic = 'force-dynamic';
 
@@ -181,6 +183,70 @@ export async function PATCH(request: Request) {
     }
 
     const leadId = String(body.id);
+
+    // Support re-fetching lead details from Meta Graph API when a valid token is provided
+    if (body.action === 'retry_fetch') {
+      const { data: lead } = await admin
+        .from('meta_lead_logs')
+        .select('*')
+        .eq('id', leadId)
+        .eq('account_id', profile.account_id)
+        .maybeSingle();
+
+      if (!lead || !lead.leadgen_id) {
+        return NextResponse.json({ error: 'Leadgen ID not found on this lead record' }, { status: 400 });
+      }
+
+      let pageAccessToken: string | null = null;
+      const { data: leadCfg } = await admin
+        .from('meta_lead_configs')
+        .select('page_access_token')
+        .eq('account_id', profile.account_id)
+        .maybeSingle();
+
+      if (leadCfg?.page_access_token) {
+        pageAccessToken = leadCfg.page_access_token;
+      } else {
+        const { data: waCfg } = await admin
+          .from('whatsapp_config')
+          .select('access_token')
+          .eq('account_id', profile.account_id)
+          .maybeSingle();
+
+        if (waCfg?.access_token) {
+          try {
+            pageAccessToken = decrypt(waCfg.access_token);
+          } catch {
+            // Ignore decrypt errors
+          }
+        }
+      }
+
+      if (!pageAccessToken) {
+        return NextResponse.json(
+          { error: 'No Meta Access Token configured. Please update your token in Settings → Meta Leads.' },
+          { status: 400 }
+        );
+      }
+
+      const leadData = await fetchLeadFromMetaGraphApi(lead.leadgen_id, pageAccessToken);
+      if (!leadData || !leadData.phone) {
+        return NextResponse.json(
+          {
+            error:
+              'Meta Graph API rejected the token or the lead could not be fetched. Please make sure the token is active and has leads_retrieval permission.',
+          },
+          { status: 400 }
+        );
+      }
+
+      const result = await processIncomingLead(profile.account_id, leadData);
+      // Clean up placeholder token_required row
+      await admin.from('meta_lead_logs').delete().eq('id', leadId);
+
+      return NextResponse.json({ success: true, processed: true, result });
+    }
+
     const updates: Record<string, unknown> = {
       updated_at: new Date().toISOString(),
     };
