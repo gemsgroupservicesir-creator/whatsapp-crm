@@ -64,5 +64,10 @@ export function normalizeEnabledFeatures(features: unknown): string[] {
   if (!Array.isArray(features) || features.length === 0) {
     return DEFAULT_ENABLED_FEATURES;
   }
-  return features.filter((f): f is string => typeof f === "string");
+  const set = new Set(features.filter((f): f is string => typeof f === "string"));
+  // Ensure 'leads' is enabled for accounts that existed before 'leads' was introduced
+  if (!set.has("leads") && (set.has("contacts") || set.has("inbox") || set.size > 0)) {
+    set.add("leads");
+  }
+  return Array.from(set);
 }

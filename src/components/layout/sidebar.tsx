@@ -141,9 +141,13 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
     };
   }, [account?.id]);
 
-  const visibleNavItems = navItems.filter(
-    (item) => !item.featureKey || enabledFeatures.includes(item.featureKey)
-  );
+  const visibleNavItems = navItems.filter((item) => {
+    if (!item.featureKey) return true;
+    if (item.featureKey === "leads") {
+      return enabledFeatures.includes("leads") || enabledFeatures.includes("contacts");
+    }
+    return enabledFeatures.includes(item.featureKey);
+  });
 
   const totalUnread = useTotalUnread();
   const unreadNotifications = useUnreadNotifications();

@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import {
   MessageSquare,
   Users,
+  UserCheck,
   GitBranch,
   Radio,
   Zap,
@@ -29,6 +30,7 @@ import {
 const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   MessageSquare,
   Users,
+  UserCheck,
   GitBranch,
   Radio,
   Zap,

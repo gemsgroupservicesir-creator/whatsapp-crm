@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import {
@@ -131,6 +131,7 @@ export default function LeadsPage() {
   const [currentUserId, setCurrentUserId] = useState<string>("");
   const [userRole, setUserRole] = useState<string>("");
   const [loading, setLoading] = useState(true);
+  const initialTabSetRef = useRef(false);
 
   // Filters
   const [search, setSearch] = useState("");
@@ -186,8 +187,9 @@ export default function LeadsPage() {
       setCurrentUserId(data.currentUserId || "");
       setUserRole(data.userRole || "");
 
-      // Default agents directly to "my" leads tab on first load
-      if (data.userRole === "agent" && activeTab === "all" && data.stats?.myLeads > 0) {
+      // Default agents directly to "my" leads tab once on first load
+      if (!initialTabSetRef.current && data.userRole === "agent" && activeTab === "all" && data.stats?.myLeads > 0) {
+        initialTabSetRef.current = true;
         setActiveTab("my");
       }
     } catch (err) {
