@@ -1,11 +1,10 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import {
-  fetchLeadFromMetaGraphApi,
   processIncomingLead,
+  handleMetaLeadgenChange,
   type IncomingLeadPayload,
 } from '@/lib/leads/meta-leads';
-import { decrypt } from '@/lib/whatsapp/encryption';
 
 export const dynamic = 'force-dynamic';
 
@@ -85,81 +84,7 @@ export async function POST(request: Request) {
 
         for (const change of changes) {
           if (change.field === 'leadgen' && change.value) {
-            const val = change.value;
-            const leadgenId = String(val.leadgen_id || '');
-            const formId = String(val.form_id || '');
-
-            // Find matching workspace by page_id or queryAccountId
-            let targetAccountId = queryAccountId;
-            let pageAccessToken: string | null = null;
-
-            if (pageId) {
-              const { data: cfg } = await admin
-                .from('meta_lead_configs')
-                .select('account_id, page_access_token')
-                .eq('page_id', pageId)
-                .maybeSingle();
-
-              if (cfg) {
-                targetAccountId = cfg.account_id;
-                pageAccessToken = cfg.page_access_token;
-              }
-            }
-
-            if (!targetAccountId) {
-              // Fallback to primary account
-              const { data: primaryAcc } = await admin
-                .from('accounts')
-                .select('id')
-                .order('created_at', { ascending: true })
-                .limit(1)
-                .maybeSingle();
-              targetAccountId = primaryAcc?.id;
-            }
-
-            if (!targetAccountId) {
-              console.warn('[MetaWebhook] No target workspace found for leadgen:', leadgenId);
-              continue;
-            }
-
-            // Fallback to whatsapp_config access_token if no page_access_token set
-            if (!pageAccessToken && targetAccountId) {
-              const { data: waCfg } = await admin
-                .from('whatsapp_config')
-                .select('access_token')
-                .eq('account_id', targetAccountId)
-                .maybeSingle();
-
-              if (waCfg?.access_token) {
-                try {
-                  pageAccessToken = decrypt(waCfg.access_token);
-                } catch {
-                  // Ignore decrypt errors
-                }
-              }
-            }
-
-            // If we have pageAccessToken, fetch real lead data from Meta
-            if (pageAccessToken && leadgenId) {
-              const leadData = await fetchLeadFromMetaGraphApi(leadgenId, pageAccessToken);
-              if (leadData && leadData.phone) {
-                await processIncomingLead(targetAccountId, leadData);
-                continue;
-              }
-            }
-
-            // Otherwise, record the notification
-            await admin.from('meta_lead_logs').insert({
-              account_id: targetAccountId,
-              leadgen_id: leadgenId,
-              form_id: formId,
-              form_name: 'Meta Lead Form',
-              full_name: 'New Meta Lead',
-              phone: 'Pending Token',
-              status: 'token_required',
-              raw_data: val,
-              error_message: 'Page Access Token needed to fetch lead details from Graph API',
-            });
+            await handleMetaLeadgenChange(pageId, change.value, queryAccountId);
           }
         }
       }

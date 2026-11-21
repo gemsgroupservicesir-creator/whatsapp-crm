@@ -3,6 +3,7 @@ import { parseInternationalPhone } from '@/lib/whatsapp/phone-utils';
 import { findOrCreateContact, resolveAuditUserId } from '@/lib/api/v1/contacts';
 import { resolveConversationByPhone } from '@/lib/whatsapp/resolve-conversation';
 import { sendMessageToConversation } from '@/lib/whatsapp/send-message';
+import { decrypt } from '@/lib/whatsapp/encryption';
 
 function getAdminClient() {
   return createClient(
@@ -346,3 +347,89 @@ export async function processIncomingLead(
     whatsappSent,
   };
 }
+
+/**
+ * Handles an incoming Meta leadgen change event from either /api/leads/meta or /api/whatsapp/webhook.
+ */
+export async function handleMetaLeadgenChange(
+  pageId: string,
+  val: Record<string, unknown>,
+  queryAccountId?: string | null
+): Promise<void> {
+  const admin = getAdminClient();
+  const leadgenId = String(val?.leadgen_id || '');
+  const formId = String(val?.form_id || '');
+
+  // Find matching workspace by page_id or queryAccountId
+  let targetAccountId = queryAccountId;
+  let pageAccessToken: string | null = null;
+
+  if (pageId) {
+    const { data: cfg } = await admin
+      .from('meta_lead_configs')
+      .select('account_id, page_access_token')
+      .eq('page_id', pageId)
+      .maybeSingle();
+
+    if (cfg) {
+      targetAccountId = cfg.account_id;
+      pageAccessToken = cfg.page_access_token;
+    }
+  }
+
+  if (!targetAccountId) {
+    // Fallback to primary account
+    const { data: primaryAcc } = await admin
+      .from('accounts')
+      .select('id')
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    targetAccountId = primaryAcc?.id;
+  }
+
+  if (!targetAccountId) {
+    console.warn('[MetaLeads] No target workspace found for leadgen:', leadgenId);
+    return;
+  }
+
+  // Fallback to whatsapp_config access_token if no page_access_token set
+  if (!pageAccessToken && targetAccountId) {
+    const { data: waCfg } = await admin
+      .from('whatsapp_config')
+      .select('access_token')
+      .eq('account_id', targetAccountId)
+      .maybeSingle();
+
+    if (waCfg?.access_token) {
+      try {
+        pageAccessToken = decrypt(waCfg.access_token);
+      } catch {
+        // Ignore decrypt errors
+      }
+    }
+  }
+
+  // If we have pageAccessToken, fetch real lead data from Meta
+  if (pageAccessToken && leadgenId) {
+    const leadData = await fetchLeadFromMetaGraphApi(leadgenId, pageAccessToken);
+    if (leadData && leadData.phone) {
+      await processIncomingLead(targetAccountId, leadData);
+      return;
+    }
+  }
+
+  // Otherwise, record the notification so the user sees that Meta reached out
+  await admin.from('meta_lead_logs').insert({
+    account_id: targetAccountId,
+    leadgen_id: leadgenId,
+    form_id: formId,
+    form_name: 'Meta Lead Form',
+    full_name: 'New Meta Lead',
+    phone: 'Pending Token',
+    status: 'token_required',
+    raw_data: val,
+    error_message: 'Page Access Token needed to fetch lead details from Graph API',
+  });
+}
+

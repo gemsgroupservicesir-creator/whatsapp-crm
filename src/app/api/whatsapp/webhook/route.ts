@@ -36,6 +36,7 @@ import {
   applyMessageStatus,
   applyPendingMessageStatuses,
 } from '@/lib/whatsapp/message-status-sync'
+import { handleMetaLeadgenChange } from '@/lib/leads/meta-leads'
 
 // The `after()` callback in POST runs within this route's max duration.
 // Inbound processing can fan out to per-media Meta verification calls, so
@@ -261,6 +262,27 @@ export async function GET(request: Request) {
       })
     }
 
+    if (verifyToken === 'wacrm_meta_leads') {
+      return new Response(challenge, {
+        status: 200,
+        headers: { 'Content-Type': 'text/plain' },
+      })
+    }
+
+    const { data: leadConfig } = await supabaseAdmin()
+      .from('meta_lead_configs')
+      .select('verify_token')
+      .eq('verify_token', verifyToken)
+      .limit(1)
+      .maybeSingle()
+
+    if (leadConfig) {
+      return new Response(challenge, {
+        status: 200,
+        headers: { 'Content-Type': 'text/plain' },
+      })
+    }
+
     return NextResponse.json(
       { error: 'Verification token mismatch' },
       { status: 403 }
@@ -422,6 +444,11 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
           },
           supabaseAdmin(),
         )
+        continue
+      }
+
+      if (change.field === 'leadgen') {
+        await handleMetaLeadgenChange(entry.id, change.value as Record<string, unknown>)
         continue
       }
 
