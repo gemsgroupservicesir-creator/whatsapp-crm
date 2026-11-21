@@ -297,3 +297,108 @@ export async function PATCH(request: Request) {
     return toErrorResponse(err);
   }
 }
+
+/**
+ * DELETE /api/leads
+ * Deletes one or multiple lead logs from meta_lead_logs.
+ * Supports:
+ * - Query param: ?id=<leadId>
+ * - Query param: ?all=true (admin only)
+ * - JSON body: { id: string } or { ids: string[] }
+ */
+export async function DELETE(request: Request) {
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser();
+
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const admin = getAdminClient();
+    const { data: profile } = await admin
+      .from('profiles')
+      .select('account_id, account_role')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (!profile?.account_id) {
+      return NextResponse.json({ error: 'No active workspace found' }, { status: 400 });
+    }
+
+    const url = new URL(request.url);
+    const queryId = url.searchParams.get('id');
+    const queryAll = url.searchParams.get('all') === 'true';
+
+    let leadIds: string[] = [];
+    if (queryId) {
+      leadIds = [queryId];
+    } else if (request.headers.get('content-type')?.includes('application/json')) {
+      const body = await request.json().catch(() => null);
+      if (body?.id) {
+        leadIds = [String(body.id)];
+      } else if (Array.isArray(body?.ids)) {
+        leadIds = body.ids.map(String);
+      }
+    }
+
+    if (queryAll) {
+      if (profile.account_role !== 'owner' && profile.account_role !== 'admin') {
+        return NextResponse.json({ error: 'Only admins can delete all leads' }, { status: 403 });
+      }
+
+      const { error: delAllErr } = await admin
+        .from('meta_lead_logs')
+        .delete()
+        .eq('account_id', profile.account_id);
+
+      if (delAllErr) {
+        return NextResponse.json({ error: delAllErr.message }, { status: 500 });
+      }
+
+      return NextResponse.json({ success: true, message: 'All leads deleted successfully' });
+    }
+
+    if (leadIds.length === 0) {
+      return NextResponse.json({ error: 'Lead id is required' }, { status: 400 });
+    }
+
+    // Role check: Admins/Owners can delete any lead. Agents can delete if unassigned or assigned to them.
+    if (profile.account_role !== 'owner' && profile.account_role !== 'admin') {
+      const { data: leads } = await admin
+        .from('meta_lead_logs')
+        .select('id, assigned_to')
+        .in('id', leadIds)
+        .eq('account_id', profile.account_id);
+
+      const unauthorized = (leads || []).some(
+        (l) => l.assigned_to !== user.id && l.assigned_to !== null
+      );
+
+      if (unauthorized) {
+        return NextResponse.json(
+          { error: 'Permission denied: only admins can delete leads assigned to other agents' },
+          { status: 403 }
+        );
+      }
+    }
+
+    const { error: deleteError } = await admin
+      .from('meta_lead_logs')
+      .delete()
+      .in('id', leadIds)
+      .eq('account_id', profile.account_id);
+
+    if (deleteError) {
+      return NextResponse.json({ error: deleteError.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ success: true, message: 'Lead deleted successfully' });
+  } catch (err) {
+    return toErrorResponse(err);
+  }
+}
+

@@ -147,6 +147,10 @@ export default function LeadsPage() {
   const [noteText, setNoteText] = useState("");
   const [savingNotes, setSavingNotes] = useState(false);
 
+  // Delete lead state
+  const [leadToDelete, setLeadToDelete] = useState<Lead | null>(null);
+  const [deletingLead, setDeletingLead] = useState(false);
+
   // Assignment Rules state
   const [rules, setRules] = useState<AssignmentRule[]>([]);
   const [loadingRules, setLoadingRules] = useState(false);
@@ -287,6 +291,27 @@ export default function LeadsPage() {
       toast.error(err instanceof Error ? err.message : "Failed to fetch lead");
     } finally {
       setRetryingId(null);
+    }
+  };
+
+  // Delete a lead
+  const handleDeleteLead = async (leadId: string) => {
+    try {
+      setDeletingLead(true);
+      const res = await fetch(`/api/leads?id=${leadId}`, {
+        method: "DELETE",
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to delete lead");
+      }
+      toast.success("Lead deleted successfully");
+      setLeadToDelete(null);
+      fetchLeads();
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to delete lead");
+    } finally {
+      setDeletingLead(false);
     }
   };
 
@@ -1069,8 +1094,29 @@ export default function LeadsPage() {
                                       <FileText className="h-3.5 w-3.5" />
                                       Counseling Remarks
                                     </DropdownMenuItem>
+
+                                    <DropdownMenuSeparator />
+
+                                    <DropdownMenuItem
+                                      onClick={() => setLeadToDelete(lead)}
+                                      className="text-xs gap-2 text-destructive focus:bg-destructive/10 focus:text-destructive cursor-pointer"
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                                      Delete Lead
+                                    </DropdownMenuItem>
                                   </DropdownMenuContent>
                                 </DropdownMenu>
+
+                                {/* Direct Delete Button */}
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => setLeadToDelete(lead)}
+                                  className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10 cursor-pointer"
+                                  title="Delete Lead"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
                               </div>
                             </TableCell>
                           </TableRow>
@@ -1283,6 +1329,55 @@ export default function LeadsPage() {
             </Button>
             <Button size="sm" onClick={handleCreateRule} disabled={savingRule}>
               {savingRule ? "Creating..." : "Save Rule"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Lead Confirmation Dialog */}
+      <Dialog open={Boolean(leadToDelete)} onOpenChange={(open) => !open && setLeadToDelete(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <Trash2 className="h-5 w-5" />
+              Delete Lead
+            </DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete the lead for{" "}
+              <span className="font-semibold text-foreground">
+                {leadToDelete?.full_name}
+              </span>
+              {leadToDelete?.phone && leadToDelete.phone !== "Pending Token" ? ` (${leadToDelete.phone})` : ""}? This action cannot be undone and will remove the lead record from your pipeline.
+            </DialogDescription>
+          </DialogHeader>
+
+          <DialogFooter className="gap-2 sm:gap-0 mt-4">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setLeadToDelete(null)}
+              disabled={deletingLead}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => leadToDelete && handleDeleteLead(leadToDelete.id)}
+              disabled={deletingLead}
+              className="gap-1.5"
+            >
+              {deletingLead ? (
+                <>
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="h-4 w-4" />
+                  Delete Lead
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
