@@ -357,62 +357,60 @@ export function WorkspaceSwitcher() {
                         <Check className="size-3.5" /> Active
                       </span>
                     ) : (
-                      <>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={switching || deletingId === ws.id}
-                          onClick={() => handleSwitch(ws.id)}
-                          className="h-8 text-xs cursor-pointer"
-                        >
-                          {switching ? (
-                            <Loader2 className="size-3 animate-spin mr-1" />
-                          ) : null}
-                          Switch
-                        </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={switching || deletingId === ws.id}
+                        onClick={() => handleSwitch(ws.id)}
+                        className="h-8 text-xs cursor-pointer"
+                      >
+                        {switching ? (
+                          <Loader2 className="size-3 animate-spin mr-1" />
+                        ) : null}
+                        Switch
+                      </Button>
+                    )}
 
-                        {isPrivileged && workspaces.length > 1 && (
-                          <>
-                            {isConfirmingDelete ? (
-                              <div className="flex items-center gap-1.5 bg-destructive/10 p-1 rounded-lg border border-destructive/20 animate-in fade-in-50">
-                                <span className="text-[11px] text-destructive font-medium px-1">
-                                  Delete?
-                                </span>
-                                <Button
-                                  size="sm"
-                                  variant="destructive"
-                                  disabled={deletingId === ws.id}
-                                  onClick={() => handleDelete(ws.id)}
-                                  className="h-6 px-2 text-[11px] cursor-pointer"
-                                >
-                                  {deletingId === ws.id ? (
-                                    <Loader2 className="size-2.5 animate-spin" />
-                                  ) : (
-                                    "Yes"
-                                  )}
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={() => setDeleteConfirmId(null)}
-                                  className="h-6 px-2 text-[11px] cursor-pointer"
-                                >
-                                  No
-                                </Button>
-                              </div>
-                            ) : (
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                disabled={deletingId === ws.id}
-                                onClick={() => setDeleteConfirmId(ws.id)}
-                                title="Delete this workspace"
-                                className="h-8 px-2 text-muted-foreground hover:text-destructive hover:bg-destructive/10 cursor-pointer"
-                              >
-                                <Trash2 className="size-4" />
-                              </Button>
-                            )}
-                          </>
+                    {isPrivileged && workspaces.length > 1 && (
+                      <>
+                        {isConfirmingDelete ? (
+                          <div className="flex items-center gap-1.5 bg-destructive/10 p-1 rounded-lg border border-destructive/20 animate-in fade-in-50">
+                            <span className="text-[11px] text-destructive font-medium px-1">
+                              Delete?
+                            </span>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              disabled={deletingId === ws.id}
+                              onClick={() => handleDelete(ws.id)}
+                              className="h-6 px-2 text-[11px] cursor-pointer"
+                            >
+                              {deletingId === ws.id ? (
+                                <Loader2 className="size-2.5 animate-spin" />
+                              ) : (
+                                "Yes"
+                              )}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => setDeleteConfirmId(null)}
+                              className="h-6 px-2 text-[11px] cursor-pointer"
+                            >
+                              No
+                            </Button>
+                          </div>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={deletingId === ws.id}
+                            onClick={() => setDeleteConfirmId(ws.id)}
+                            title="Delete this workspace"
+                            className="h-8 px-2 text-muted-foreground hover:text-destructive hover:bg-destructive/10 cursor-pointer"
+                          >
+                            <Trash2 className="size-4" />
+                          </Button>
                         )}
                       </>
                     )}
