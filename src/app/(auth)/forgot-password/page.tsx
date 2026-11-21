@@ -34,8 +34,13 @@ export default function ForgotPasswordPage() {
     // #592). Supabase must allow this origin under Authentication →
     // URL Configuration → Redirect URLs, or it silently falls back to
     // its Site URL; see docs/auth-emails.md.
+    const origin =
+      process.env.NEXT_PUBLIC_SITE_URL?.trim().replace(/\/+$/, "") ||
+      (typeof window !== "undefined" && window.location.origin
+        ? window.location.origin
+        : "https://whatsapp-crm-beta-seven.vercel.app");
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent("/reset-password")}`,
+      redirectTo: `${origin}/auth/callback?next=${encodeURIComponent("/reset-password")}`,
     });
 
     if (error) {

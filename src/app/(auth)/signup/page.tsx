@@ -75,7 +75,12 @@ function SignupPageInner() {
     const next = inviteToken
       ? `/join/${encodeURIComponent(inviteToken)}`
       : "/dashboard";
-    const emailRedirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`;
+    const origin =
+      process.env.NEXT_PUBLIC_SITE_URL?.trim().replace(/\/+$/, "") ||
+      (typeof window !== "undefined" && window.location.origin
+        ? window.location.origin
+        : "https://whatsapp-crm-beta-seven.vercel.app");
+    const emailRedirectTo = `${origin}/auth/callback?next=${encodeURIComponent(next)}`;
 
     const { error } = await supabase.auth.signUp({
       email,
