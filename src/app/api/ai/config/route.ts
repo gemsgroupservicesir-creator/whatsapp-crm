@@ -52,11 +52,16 @@ export async function GET() {
     // The keys are selected only to derive the has_* flags; neither is
     // returned to the client.
     const { api_key, embeddings_api_key, ...safe } = data
+    const isGemini =
+      safe.provider === 'gemini' ||
+      (typeof safe.base_url === 'string' &&
+        safe.base_url.includes('generativelanguage.googleapis.com'))
     return NextResponse.json({
       configured: true,
       has_key: !!api_key,
       has_embeddings_key: !!embeddings_api_key,
       ...safe,
+      provider: isGemini ? 'gemini' : safe.provider,
     })
   } catch (err) {
     return toErrorResponse(err)
@@ -83,7 +88,7 @@ export async function POST(request: Request) {
     if (!body || typeof body !== 'object') return bad(t('common.invalidRequestBody'))
 
     const provider = body.provider as AiProvider
-    if (provider !== 'openai' && provider !== 'anthropic' && provider !== 'openai_compatible') {
+    if (provider !== 'openai' && provider !== 'anthropic' && provider !== 'openai_compatible' && provider !== 'gemini') {
       return bad(t('ai.providerInvalid'))
     }
     const model = typeof body.model === 'string' ? body.model.trim() : ''
@@ -142,7 +147,9 @@ export async function POST(request: Request) {
 
     let apiKeyPlain: string
     let baseUrl: string | null = null
-    if (provider === 'openai_compatible') {
+    if (provider === 'gemini') {
+      baseUrl = 'https://generativelanguage.googleapis.com/v1beta/openai'
+    } else if (provider === 'openai_compatible') {
       const candidate = baseUrlProvided
         ? requestedBaseUrl
         : existing?.provider === 'openai_compatible'
@@ -223,10 +230,13 @@ export async function POST(request: Request) {
     }
 
     const encryptedKey = rawKey ? encrypt(rawKey) : null
+    const dbProvider = provider === 'gemini' ? 'openai_compatible' : provider
+    const dbBaseUrl = provider === 'gemini' ? 'https://generativelanguage.googleapis.com/v1beta/openai' : baseUrl
+
     const shared: Record<string, unknown> = {
-      provider,
+      provider: dbProvider,
       model,
-      base_url: baseUrl,
+      base_url: dbBaseUrl,
       system_prompt: systemPrompt,
       is_active: isActive,
       auto_reply_enabled: autoReplyEnabled,

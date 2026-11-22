@@ -70,8 +70,12 @@ export async function loadAiConfig(
     }
   }
 
+  const isGemini =
+    (row.provider as string) === 'gemini' ||
+    (row.base_url?.includes('generativelanguage.googleapis.com') ?? false)
+
   return {
-    provider: row.provider,
+    provider: isGemini ? 'gemini' : row.provider,
     model: row.model,
     baseUrl: row.base_url,
     apiKey: decrypt(row.api_key),

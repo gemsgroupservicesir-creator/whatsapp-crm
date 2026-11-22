@@ -32,7 +32,7 @@ export async function POST(request: Request) {
     }
 
     const provider = body.provider as AiProvider
-    if (provider !== 'openai' && provider !== 'anthropic' && provider !== 'openai_compatible') {
+    if (provider !== 'openai' && provider !== 'anthropic' && provider !== 'openai_compatible' && provider !== 'gemini') {
       return NextResponse.json(
         { error: t('ai.providerInvalid') },
         { status: 400 },
@@ -48,7 +48,7 @@ export async function POST(request: Request) {
 
     const rawKey = typeof body.api_key === 'string' ? body.api_key.trim() : ''
     let apiKeyPlain = rawKey
-    if (!apiKeyPlain || provider === 'openai_compatible') {
+    if (!apiKeyPlain || provider === 'openai_compatible' || provider === 'gemini') {
       const { data } = await supabase
         .from('ai_configs')
         .select('api_key, provider, base_url')
@@ -57,7 +57,9 @@ export async function POST(request: Request) {
       existing = data as unknown as { api_key: string; provider: AiProvider; base_url: string | null } | null
     }
     let baseUrl: string | null = null
-    if (provider === 'openai_compatible') {
+    if (provider === 'gemini') {
+      baseUrl = 'https://generativelanguage.googleapis.com/v1beta/openai'
+    } else if (provider === 'openai_compatible') {
       const candidate = baseUrlProvided
         ? requestedBaseUrl
         : existing?.provider === 'openai_compatible'

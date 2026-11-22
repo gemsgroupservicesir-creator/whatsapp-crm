@@ -9,6 +9,7 @@ import { HANDOFF_SENTINEL, aiRequestTimeoutMs } from './defaults'
 import { generateOpenAi } from './providers/openai'
 import { generateOpenAiCompatible } from './providers/openai-compatible'
 import { generateAnthropic } from './providers/anthropic'
+import { generateGemini } from './providers/gemini'
 
 export interface GenerateArgs {
   config: AiConfig
@@ -37,11 +38,18 @@ export async function generateReply(args: GenerateArgs): Promise<GenerateResult>
 
   let result: { text: string; usage: AiUsage | null }
   switch (config.provider) {
+    case 'gemini':
+      result = await generateGemini(providerArgs)
+      break
     case 'openai':
       result = await generateOpenAi(providerArgs)
       break
     case 'openai_compatible':
-      result = await generateOpenAiCompatible(providerArgs)
+      if (config.baseUrl?.includes('generativelanguage.googleapis.com')) {
+        result = await generateGemini(providerArgs)
+      } else {
+        result = await generateOpenAiCompatible(providerArgs)
+      }
       break
     case 'anthropic':
       result = await generateAnthropic(providerArgs)

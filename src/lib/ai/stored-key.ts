@@ -22,7 +22,19 @@ export function canReuseStoredAiKey(
   provider: AiProvider,
   baseUrl: string | null,
 ): boolean {
-  if (!stored || stored.provider !== provider) return false
+  if (!stored) return false
+  const isStoredGemini =
+    stored.provider === 'gemini' ||
+    (stored.provider === 'openai_compatible' &&
+      (stored.base_url?.includes('generativelanguage.googleapis.com') ?? false))
+
+  if (provider === 'gemini') {
+    return isStoredGemini
+  }
+  if (isStoredGemini) {
+    return false
+  }
+  if (stored.provider !== provider) return false
   if (provider !== 'openai_compatible') return true
   return sameEndpoint(stored.base_url, baseUrl)
 }

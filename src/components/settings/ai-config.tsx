@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Loader2, Sparkles, CheckCircle2, Trash2, Eye, EyeOff } from 'lucide-react';
+import { Loader2, Sparkles, CheckCircle2, Trash2, Eye, EyeOff, ExternalLink, GraduationCap } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { canEditSettings } from '@/lib/auth/roles';
 import { Button } from '@/components/ui/button';
@@ -39,12 +39,22 @@ const MASKED_KEY = '••••••••••••••••';
 // unassigned" choice gets a sentinel that maps to null in the payload.
 const HANDOFF_QUEUE = '__queue__';
 
+export const EDUCATION_COUNSELOR_PROMPT = `You are an expert Admissions Counselor at Gems Group Services, guiding prospective students and parents on higher education admissions in India and abroad (Engineering, Management/MBA, Medical, IT, Law).
+
+Key Guidelines:
+1. Warmly greet students, understand their preferred course, qualification/grades, and target study destination.
+2. Provide concise, helpful information regarding eligible colleges, application timelines, admission procedures, and fee ranges.
+3. Keep answers friendly, professional, and optimized for WhatsApp (use short paragraphs and clear bullet points).
+4. If a student is ready to apply, asks for direct admission assistance, wants a phone/video consultation, or asks to speak with a human counselor, politely inform them that you are connecting them to Senior Admissions Counselor Mamata Yadav, and append [[HANDOFF]] at the very end of your response.`;
+
 const PROVIDER_LABEL: Record<Exclude<AiProvider, 'openai_compatible'>, string> = {
+  gemini: 'Google Gemini',
   openai: 'OpenAI',
   anthropic: 'Anthropic (Claude)',
 };
 
 const KEY_PLACEHOLDER: Record<AiProvider, string> = {
+  gemini: 'AIzaSy...',
   openai: 'sk-...',
   anthropic: 'sk-ant-...',
   openai_compatible: 'your-api-key',
@@ -61,8 +71,8 @@ export function AiConfig() {
   const [removing, setRemoving] = useState(false);
 
   const [configured, setConfigured] = useState(false);
-  const [provider, setProvider] = useState<AiProvider>('openai');
-  const [model, setModel] = useState(AI_PROVIDER_DEFAULT_MODEL.openai);
+  const [provider, setProvider] = useState<AiProvider>('gemini');
+  const [model, setModel] = useState(AI_PROVIDER_DEFAULT_MODEL.gemini);
   const [baseUrl, setBaseUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [keyEdited, setKeyEdited] = useState(false);
@@ -133,6 +143,7 @@ export function AiConfig() {
   const handleProviderChange = (next: AiProvider) => {
     setProvider(next);
     const isDefaultModel =
+      model === AI_PROVIDER_DEFAULT_MODEL.gemini ||
       model === AI_PROVIDER_DEFAULT_MODEL.openai ||
       model === AI_PROVIDER_DEFAULT_MODEL.anthropic ||
       model === AI_PROVIDER_DEFAULT_MODEL.openai_compatible ||
@@ -294,6 +305,14 @@ export function AiConfig() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="gemini">
+                      <div className="flex items-center gap-2">
+                        <span>{PROVIDER_LABEL.gemini}</span>
+                        <span className="rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-500">
+                          Recommended
+                        </span>
+                      </div>
+                    </SelectItem>
                     <SelectItem value="openai">{PROVIDER_LABEL.openai}</SelectItem>
                     <SelectItem value="anthropic">
                       {PROVIDER_LABEL.anthropic}
@@ -380,6 +399,20 @@ export function AiConfig() {
                   {t('testKey')}
                 </Button>
               </div>
+              {provider === 'gemini' && (
+                <p className="text-xs text-muted-foreground">
+                  Get your free Gemini API key from{' '}
+                  <a
+                    href="https://aistudio.google.com/apikey"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary hover:underline inline-flex items-center gap-0.5 font-medium"
+                  >
+                    Google AI Studio <ExternalLink className="h-3 w-3 inline" />
+                  </a>
+                  . High speed and generous free quota.
+                </p>
+              )}
             </div>
 
             <div className="space-y-2">
@@ -425,13 +458,26 @@ export function AiConfig() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="ai-prompt">{t('businessContext')}</Label>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Label htmlFor="ai-prompt">{t('businessContext')}</Label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setSystemPrompt(EDUCATION_COUNSELOR_PROMPT)}
+                  disabled={disabled}
+                  className="h-7 text-xs text-primary hover:text-primary gap-1.5 cursor-pointer"
+                >
+                  <GraduationCap className="h-3.5 w-3.5" />
+                  Apply Education Counselor Template
+                </Button>
+              </div>
               <Textarea
                 id="ai-prompt"
                 value={systemPrompt}
                 onChange={(e) => setSystemPrompt(e.target.value)}
                 placeholder={t('promptPlaceholder')}
-                rows={5}
+                rows={6}
                 disabled={disabled}
               />
             </div>

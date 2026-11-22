@@ -344,6 +344,7 @@ export async function processIncomingLead(
         conversationId,
         messageType: 'template',
         templateName: config.auto_template_name,
+        templateParams: [lead.fullName || 'Student'],
       });
       whatsappSent = true;
     } catch (sendErr: unknown) {
