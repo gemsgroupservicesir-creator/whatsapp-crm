@@ -31,6 +31,7 @@ export interface ProcessLeadResult {
   success: boolean;
   contactId?: string;
   conversationId?: string;
+  dealId?: string;
   assignedTo?: string;
   whatsappSent?: boolean;
   error?: string;
@@ -374,13 +375,228 @@ export async function processIncomingLead(
     error_message: whatsappError || null,
   });
 
+  // 8. Automatically sync lead into Education Admissions Pipeline
+  let dealId: string | undefined;
+  try {
+    const syncedDealId = await syncLeadToPipelineDeal(admin, accountId, {
+      contactId,
+      conversationId: conversationId || null,
+      fullName: lead.fullName,
+      phone: formattedPhone,
+      email: lead.email,
+      college: lead.college,
+      course: lead.course,
+      city: lead.city,
+      formName: lead.formName,
+      assignedUserId: assignedTo,
+    });
+    if (syncedDealId) dealId = syncedDealId;
+  } catch (syncErr) {
+    console.warn('[MetaLeads] Pipeline deal auto-sync failed:', syncErr);
+  }
+
   return {
     success: true,
     contactId,
     conversationId,
+    dealId,
     assignedTo,
     whatsappSent,
   };
+}
+
+/**
+ * Automatically syncs a lead into an Education Admissions Pipeline Deal.
+ * If the deal exists for this contact in the pipeline, it updates it.
+ * Otherwise, it creates a new deal in the first stage ("New Inquiry").
+ */
+export async function syncLeadToPipelineDeal(
+  admin: SupabaseClient,
+  accountId: string,
+  data: {
+    contactId: string;
+    conversationId?: string | null;
+    fullName: string;
+    phone: string;
+    email?: string | null;
+    college?: string | null;
+    course?: string | null;
+    city?: string | null;
+    formName?: string | null;
+    assignedUserId?: string | null;
+  }
+): Promise<string | null> {
+  try {
+    // 1. Find or seed primary Education Admissions Pipeline for this account
+    let { data: pipeline } = await admin
+      .from('pipelines')
+      .select('id, name')
+      .eq('account_id', accountId)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    const auditUserId = await resolveAuditUserId(admin, accountId);
+
+    if (!pipeline) {
+      const { data: newPipe } = await admin
+        .from('pipelines')
+        .insert({
+          account_id: accountId,
+          user_id: auditUserId,
+          name: 'Education Admissions',
+        })
+        .select('id, name')
+        .single();
+
+      if (newPipe) {
+        pipeline = newPipe;
+        const defaultStages = [
+          { name: 'New Inquiry', color: '#3b82f6', position: 0 },
+          { name: 'Counseling', color: '#eab308', position: 1 },
+          { name: 'Document Collection', color: '#f97316', position: 2 },
+          { name: 'Application Submitted', color: '#8b5cf6', position: 3 },
+          { name: 'Offer Letter Received', color: '#06b6d4', position: 4 },
+          { name: 'Visa Processing', color: '#ec4899', position: 5 },
+          { name: 'Enrolled / Visa Approved', color: '#22c55e', position: 6 },
+        ];
+        await admin.from('pipeline_stages').insert(
+          defaultStages.map((s) => ({
+            pipeline_id: newPipe.id,
+            name: s.name,
+            color: s.color,
+            position: s.position,
+          }))
+        );
+      }
+    }
+
+    if (!pipeline) return null;
+
+    // 2. Fetch stages for this pipeline (ordered by position)
+    const { data: stages } = await admin
+      .from('pipeline_stages')
+      .select('id, name, position')
+      .eq('pipeline_id', pipeline.id)
+      .order('position', { ascending: true });
+
+    if (!stages || stages.length === 0) return null;
+    const firstStage = stages[0];
+
+    // 3. Resolve profile for assigned agent (deals.assigned_to references profiles.id)
+    let assignedProfileId: string | null = null;
+    if (data.assignedUserId) {
+      const { data: prof } = await admin
+        .from('profiles')
+        .select('id')
+        .eq('user_id', data.assignedUserId)
+        .maybeSingle();
+      assignedProfileId = prof?.id || null;
+    }
+
+    // 4. Construct deal title & notes
+    const dest = data.college ? data.college.replace(/_/g, ' ').toUpperCase() : '';
+    const crse = data.course ? data.course.trim() : '';
+    const detail = [dest, crse].filter(Boolean).join(' • ');
+    const dealTitle = detail ? `${data.fullName} • ${detail}` : `${data.fullName} • Study Inquiry`;
+
+    const notesLines = [
+      data.college ? `🎓 Preferred College/Destination: ${data.college.replace(/_/g, ' ')}` : null,
+      data.course ? `📚 Course: ${data.course}` : null,
+      data.city ? `📍 City: ${data.city}` : null,
+      data.email ? `✉️ Email: ${data.email}` : null,
+      data.phone ? `📱 WhatsApp: ${data.phone}` : null,
+      data.formName ? `📋 Form: ${data.formName}` : null,
+    ].filter(Boolean);
+
+    // 5. Check if deal already exists for this contact in this pipeline
+    const { data: existingDeal } = await admin
+      .from('deals')
+      .select('id, stage_id, notes, assigned_to')
+      .eq('account_id', accountId)
+      .eq('pipeline_id', pipeline.id)
+      .eq('contact_id', data.contactId)
+      .maybeSingle();
+
+    if (existingDeal) {
+      await admin
+        .from('deals')
+        .update({
+          title: dealTitle,
+          assigned_to: assignedProfileId || existingDeal.assigned_to,
+          notes: notesLines.join('\n') || existingDeal.notes,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existingDeal.id);
+      return existingDeal.id;
+    }
+
+    // 6. Create deal in first stage ("New Inquiry")
+    const { data: createdDeal, error: dealErr } = await admin
+      .from('deals')
+      .insert({
+        account_id: accountId,
+        user_id: auditUserId,
+        pipeline_id: pipeline.id,
+        stage_id: firstStage.id,
+        contact_id: data.contactId,
+        conversation_id: data.conversationId || null,
+        title: dealTitle,
+        value: 0,
+        currency: 'NPR',
+        notes: notesLines.join('\n'),
+        status: 'open',
+        assigned_to: assignedProfileId,
+      })
+      .select('id')
+      .single();
+
+    if (dealErr) {
+      console.error('[MetaLeads] Deal sync insert error:', dealErr);
+      return null;
+    }
+
+    return createdDeal?.id || null;
+  } catch (err) {
+    console.error('[MetaLeads] syncLeadToPipelineDeal error:', err);
+    return null;
+  }
+}
+
+/**
+ * Syncs all processed leads in a workspace to pipeline deals.
+ */
+export async function syncAllLeadsToPipeline(
+  admin: SupabaseClient,
+  accountId: string
+): Promise<number> {
+  const { data: leads } = await admin
+    .from('meta_lead_logs')
+    .select('*')
+    .eq('account_id', accountId)
+    .eq('status', 'processed');
+
+  if (!leads || leads.length === 0) return 0;
+
+  let count = 0;
+  for (const lead of leads) {
+    if (!lead.contact_id) continue;
+    const synced = await syncLeadToPipelineDeal(admin, accountId, {
+      contactId: lead.contact_id,
+      conversationId: lead.conversation_id || null,
+      fullName: lead.full_name,
+      phone: lead.phone,
+      email: lead.email,
+      college: lead.college,
+      course: lead.course,
+      city: lead.city,
+      formName: lead.form_name,
+      assignedUserId: lead.assigned_to,
+    });
+    if (synced) count++;
+  }
+
+  return count;
 }
 
 /**

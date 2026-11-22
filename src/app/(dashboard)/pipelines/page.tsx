@@ -24,27 +24,28 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { GitBranch, Plus, ChevronDown, Settings } from "lucide-react";
+import { GitBranch, Plus, ChevronDown, Settings, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { useCan } from "@/hooks/use-can";
 import { useAuth } from "@/hooks/use-auth";
 import { GatedButton } from "@/components/ui/gated-button";
 import { useTranslations } from "next-intl";
+import { cn } from "@/lib/utils";
 
 // Pipeline creation is admin-class (settings-tier write under
 // the new RLS); deal creation is operational and only requires
 // agent+. The two CTAs gate on different `useCan` capabilities,
 // not on different copy.
 
-// Spec-defined seed — name and color per the product spec. Names are
-// message keys under `Pipelines.page.defaultStages` so the seeded
-// stages come out in the UI language.
+// Education sector default stages for admissions consultancy
 const SPEC_DEFAULT_STAGES = [
-  { nameKey: "newLead", color: "#3b82f6", position: 0 }, // blue
-  { nameKey: "qualified", color: "#eab308", position: 1 }, // yellow
-  { nameKey: "proposalSent", color: "#f97316", position: 2 }, // orange
-  { nameKey: "negotiation", color: "#8b5cf6", position: 3 }, // purple
-  { nameKey: "won", color: "#22c55e", position: 4 }, // green
+  { nameKey: "newInquiry", defaultName: "New Inquiry", color: "#3b82f6", position: 0 },
+  { nameKey: "counseling", defaultName: "Counseling", color: "#eab308", position: 1 },
+  { nameKey: "documentCollection", defaultName: "Document Collection", color: "#f97316", position: 2 },
+  { nameKey: "applicationSubmitted", defaultName: "Application Submitted", color: "#8b5cf6", position: 3 },
+  { nameKey: "offerLetterReceived", defaultName: "Offer Letter Received", color: "#06b6d4", position: 4 },
+  { nameKey: "visaProcessing", defaultName: "Visa Processing", color: "#ec4899", position: 5 },
+  { nameKey: "enrolled", defaultName: "Enrolled / Visa Approved", color: "#22c55e", position: 6 },
 ] as const;
 
 export default function PipelinesPage() {
@@ -123,7 +124,7 @@ export default function PipelinesPage() {
 
     const { data: pipeline, error } = await supabase
       .from("pipelines")
-      .insert({ user_id: user.id, account_id: accountId, name: t("defaultPipelineName") })
+      .insert({ user_id: user.id, account_id: accountId, name: "Education Admissions" })
       .select()
       .single();
 
@@ -134,14 +135,14 @@ export default function PipelinesPage() {
 
     const stagesPayload = SPEC_DEFAULT_STAGES.map((s) => ({
       pipeline_id: pipeline.id,
-      name: t(`defaultStages.${s.nameKey}`),
+      name: s.defaultName,
       color: s.color,
       position: s.position,
     }));
     await supabase.from("pipeline_stages").insert(stagesPayload);
 
     return pipeline as Pipeline;
-  }, [supabase, accountId, t]);
+  }, [supabase, accountId]);
 
   // Initial load + seed-if-empty
   useEffect(() => {
@@ -298,6 +299,34 @@ export default function PipelinesPage() {
     toast.success(t("toastPipelineCreated"));
   }
 
+  const [syncingLeads, setSyncingLeads] = useState(false);
+
+  const handleSyncLeads = async () => {
+    try {
+      setSyncingLeads(true);
+      const res = await fetch("/api/leads", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "sync_pipeline" }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to sync leads");
+      toast.success(
+        data.syncedCount
+          ? `Synced ${data.syncedCount} lead${data.syncedCount === 1 ? "" : "s"} into Education Admissions!`
+          : "All leads are already up to date in the pipeline!"
+      );
+      if (selectedPipelineId) {
+        const d = await loadDeals(selectedPipelineId);
+        setDeals(d);
+      }
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Sync failed");
+    } finally {
+      setSyncingLeads(false);
+    }
+  };
+
   const selectedPipeline = pipelines.find((p) => p.id === selectedPipelineId);
 
   if (loading) {
@@ -370,6 +399,16 @@ export default function PipelinesPage() {
         </div>
 
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            onClick={handleSyncLeads}
+            disabled={syncingLeads || !selectedPipelineId}
+            className="border-border bg-card text-foreground hover:bg-muted"
+            title="Auto-sync new and existing leads into pipeline deals"
+          >
+            <RefreshCw className={cn("mr-1.5 h-4 w-4 text-primary", syncingLeads && "animate-spin")} />
+            Sync Leads
+          </Button>
           <GatedButton
             variant="outline"
             canAct={canEditSettings}

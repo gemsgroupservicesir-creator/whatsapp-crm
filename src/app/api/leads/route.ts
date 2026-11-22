@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { toErrorResponse } from '@/lib/auth/account';
-import { fetchLeadFromMetaGraphApi, processIncomingLead } from '@/lib/leads/meta-leads';
+import { fetchLeadFromMetaGraphApi, processIncomingLead, syncAllLeadsToPipeline } from '@/lib/leads/meta-leads';
 import { decrypt } from '@/lib/whatsapp/encryption';
 
 export const dynamic = 'force-dynamic';
@@ -178,7 +178,17 @@ export async function PATCH(request: Request) {
     }
 
     const body = await request.json().catch(() => null);
-    if (!body || !body.id) {
+    if (!body) {
+      return NextResponse.json({ error: 'Request body required' }, { status: 400 });
+    }
+
+    // Support syncing all leads into pipeline deals
+    if (body.action === 'sync_pipeline') {
+      const syncedCount = await syncAllLeadsToPipeline(admin, profile.account_id);
+      return NextResponse.json({ success: true, syncedCount });
+    }
+
+    if (!body.id) {
       return NextResponse.json({ error: 'Lead id is required' }, { status: 400 });
     }
 
@@ -300,6 +310,34 @@ export async function PATCH(request: Request) {
         .from('conversations')
         .update({ assigned_agent_id: body.assigned_to || null })
         .eq('id', updatedLead.conversation_id);
+    }
+
+    // Sync deal title & assignee if updated
+    if (updatedLead.contact_id) {
+      let assignedProfileId: string | null = null;
+      if (updatedLead.assigned_to) {
+        const { data: prof } = await admin
+          .from('profiles')
+          .select('id')
+          .eq('user_id', updatedLead.assigned_to)
+          .maybeSingle();
+        assignedProfileId = prof?.id || null;
+      }
+
+      const dest = updatedLead.college ? updatedLead.college.replace(/_/g, ' ').toUpperCase() : '';
+      const crse = updatedLead.course ? updatedLead.course.trim() : '';
+      const detail = [dest, crse].filter(Boolean).join(' • ');
+      const dealTitle = detail ? `${updatedLead.full_name} • ${detail}` : `${updatedLead.full_name} • Study Inquiry`;
+
+      await admin
+        .from('deals')
+        .update({
+          title: dealTitle,
+          assigned_to: assignedProfileId,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('account_id', profile.account_id)
+        .eq('contact_id', updatedLead.contact_id);
     }
 
     return NextResponse.json({ success: true, lead: updatedLead });
