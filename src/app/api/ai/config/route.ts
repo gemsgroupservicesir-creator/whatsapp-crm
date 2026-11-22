@@ -19,6 +19,8 @@ function bad(message: string) {
   return NextResponse.json({ error: message }, { status: 400 })
 }
 
+export const maxDuration = 60
+
 /**
  * GET /api/ai/config
  *

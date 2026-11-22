@@ -19,6 +19,8 @@ const t = getT('Api')
  * changing the model). Returns `{ ok: true }` on success, 400 with the
  * provider's message on failure.
  */
+export const maxDuration = 60
+
 export async function POST(request: Request) {
   try {
     const { supabase, accountId, userId } = await requireRole('admin')

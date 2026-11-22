@@ -23,6 +23,8 @@ const t = getT('Api')
  * Uses the account's configured provider/key (BYO). Read-only: it never
  * sends or stores anything, just hands text back to the composer.
  */
+export const maxDuration = 60
+
 export async function POST(request: Request) {
   try {
     const { supabase, accountId, userId } = await requireRole('agent')

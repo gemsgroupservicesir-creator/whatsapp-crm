@@ -24,6 +24,8 @@ const MAX_TURNS = 20
  * master switch is off (requireActive:false) so you can try it before
  * going live. Stateless: the client sends the running transcript each turn.
  */
+export const maxDuration = 60
+
 export async function POST(request: Request) {
   try {
     const { supabase, accountId, userId } = await requireRole('agent')

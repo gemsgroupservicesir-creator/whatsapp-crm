@@ -37,6 +37,7 @@ interface NativeGeminiResponse {
 
 /**
  * Call Google Gemini native REST endpoint.
+ * Direct, low-latency call to generativelanguage.googleapis.com.
  */
 async function callNativeGemini(
   cleanKey: string,
@@ -53,11 +54,20 @@ async function callNativeGemini(
     parts: [{ text: m.content }],
   }))
 
+  const generationConfig: Record<string, unknown> = {
+    maxOutputTokens: MAX_OUTPUT_TOKENS,
+  }
+
+  // Use low thinking level on reasoning models (3.x, 2.5) to keep WhatsApp replies fast (< 1-2s)
+  if (cleanModel.startsWith('gemini-3') || cleanModel.startsWith('gemini-2.5')) {
+    generationConfig.thinkingConfig = {
+      thinkingLevel: 'low',
+    }
+  }
+
   const body: Record<string, unknown> = {
     contents,
-    generationConfig: {
-      maxOutputTokens: MAX_OUTPUT_TOKENS,
-    },
+    generationConfig,
   }
 
   if (systemPrompt && systemPrompt.trim()) {
@@ -82,6 +92,38 @@ async function callNativeGemini(
   }
 
   if (!res.ok) {
+    // If thinkingConfig was rejected (e.g. model doesn't support thinkingConfig), retry once without it
+    if (res.status === 400 && generationConfig.thinkingConfig) {
+      delete generationConfig.thinkingConfig
+      try {
+        const retryRes = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': cleanKey,
+          },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(timeoutMs),
+        })
+        if (retryRes.ok) {
+          const retryData = (await retryRes.json().catch(() => null)) as NativeGeminiResponse | null
+          const retryText = retryData?.candidates?.[0]?.content?.parts?.[0]?.text
+          if (retryText && typeof retryText === 'string' && retryText.trim()) {
+            return {
+              text: retryText,
+              usage: normalizeUsage({
+                prompt: retryData?.usageMetadata?.promptTokenCount,
+                completion: retryData?.usageMetadata?.candidatesTokenCount,
+                total: retryData?.usageMetadata?.totalTokenCount,
+              }),
+            }
+          }
+        }
+      } catch {
+        // Fall through to error below
+      }
+    }
+
     throw await providerHttpError('Google Gemini', res)
   }
 
@@ -104,24 +146,32 @@ async function callNativeGemini(
 }
 
 /**
- * Call Google Gemini API (tries OpenAI compatibility endpoint first, falls back to native REST).
- * Returns the raw assistant response + normalized token usage.
+ * Call Google Gemini OpenAI-compatible endpoint.
  */
-export async function generateGemini(args: ProviderArgs): Promise<ProviderResult> {
-  const { apiKey, model, systemPrompt, messages, timeoutMs } = args
-  const cleanKey = apiKey.trim().replace(/^["']|["']$/g, '')
-  let rawModel = model?.trim() || 'gemini-3.8-flash'
-  // gemini-2.5-flash is no longer available to new users according to Google's API notice
-  if (rawModel === 'gemini-2.5-flash' || rawModel === 'models/gemini-2.5-flash') {
-    rawModel = 'gemini-3.8-flash'
-  }
-  const activeModel = rawModel.replace(/^models\//, '')
-
+async function callOpenAiGemini(
+  cleanKey: string,
+  modelName: string,
+  systemPrompt: string | null | undefined,
+  messages: ChatMessage[],
+  timeoutMs: number,
+): Promise<ProviderResult> {
+  const cleanModel = modelName.trim().replace(/^models\//, '')
   const promptMessages: { role: 'system' | 'user' | 'assistant'; content: string }[] = []
   if (systemPrompt && systemPrompt.trim()) {
     promptMessages.push({ role: 'system', content: systemPrompt.trim() })
   }
   promptMessages.push(...mergeConsecutive(messages))
+
+  const requestBody: Record<string, unknown> = {
+    model: cleanModel,
+    messages: promptMessages,
+    max_tokens: MAX_OUTPUT_TOKENS,
+  }
+
+  // Set reasoning_effort to low for Gemini 3.x models to prevent timeouts
+  if (cleanModel.startsWith('gemini-3') || cleanModel.startsWith('gemini-2.5')) {
+    requestBody.reasoning_effort = 'low'
+  }
 
   let res: Response
   try {
@@ -131,11 +181,7 @@ export async function generateGemini(args: ProviderArgs): Promise<ProviderResult
         Authorization: `Bearer ${cleanKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        model: activeModel,
-        messages: promptMessages,
-        max_tokens: MAX_OUTPUT_TOKENS,
-      }),
+      body: JSON.stringify(requestBody),
       signal: AbortSignal.timeout(timeoutMs),
     })
   } catch (err) {
@@ -143,19 +189,9 @@ export async function generateGemini(args: ProviderArgs): Promise<ProviderResult
   }
 
   if (!res.ok) {
-    // If OpenAI-compatible endpoint failed, check if it was an invalid key
-    const openAiErr = await providerHttpError('Google Gemini', res)
-    if (openAiErr.code === 'invalid_key') {
-      throw openAiErr
-    }
-
-    // If Gemini informs us a model is no longer available or not found, retry with gemini-3.8-flash
-    if (
-      activeModel !== 'gemini-3.8-flash' &&
-      (openAiErr.message.includes('no longer available') ||
-        openAiErr.message.includes('not found') ||
-        openAiErr.message.includes('gemini-2.5-flash'))
-    ) {
+    // If reasoning_effort was rejected by older model, retry once without it
+    if (res.status === 400 && requestBody.reasoning_effort) {
+      delete requestBody.reasoning_effort
       try {
         const retryRes = await fetch(GEMINI_OPENAI_URL, {
           method: 'POST',
@@ -163,11 +199,7 @@ export async function generateGemini(args: ProviderArgs): Promise<ProviderResult
             Authorization: `Bearer ${cleanKey}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            model: 'gemini-3.8-flash',
-            messages: promptMessages,
-            max_tokens: MAX_OUTPUT_TOKENS,
-          }),
+          body: JSON.stringify(requestBody),
           signal: AbortSignal.timeout(timeoutMs),
         })
         if (retryRes.ok) {
@@ -185,38 +217,11 @@ export async function generateGemini(args: ProviderArgs): Promise<ProviderResult
           }
         }
       } catch {
-        // Fall through to native REST
+        // Fall through
       }
     }
 
-    // Try native Gemini REST endpoint as fallback
-    try {
-      return await callNativeGemini(
-        cleanKey,
-        activeModel,
-        systemPrompt,
-        messages,
-        timeoutMs,
-      )
-    } catch (nativeErr) {
-      // If model not found or restricted, attempt gemini-3.8-flash
-      if (
-        activeModel !== 'gemini-3.8-flash' &&
-        nativeErr instanceof AiError &&
-        (nativeErr.message.includes('not found') ||
-          nativeErr.message.includes('not supported') ||
-          nativeErr.message.includes('no longer available'))
-      ) {
-        return await callNativeGemini(
-          cleanKey,
-          'gemini-3.8-flash',
-          systemPrompt,
-          messages,
-          timeoutMs,
-        )
-      }
-      throw nativeErr instanceof AiError ? nativeErr : openAiErr
-    }
+    throw await providerHttpError('Google Gemini', res)
   }
 
   const data = (await res.json().catch(() => null)) as GeminiChatResponse | null
@@ -227,11 +232,110 @@ export async function generateGemini(args: ProviderArgs): Promise<ProviderResult
     })
   }
 
-  const usage = normalizeUsage({
-    prompt: data?.usage?.prompt_tokens,
-    completion: data?.usage?.completion_tokens,
-    total: data?.usage?.total_tokens,
-  })
+  return {
+    text,
+    usage: normalizeUsage({
+      prompt: data?.usage?.prompt_tokens,
+      completion: data?.usage?.completion_tokens,
+      total: data?.usage?.total_tokens,
+    }),
+  }
+}
 
-  return { text, usage }
+/**
+ * Call Google Gemini API (tries Native REST first for lowest latency, falls back to OpenAI-compatible endpoint).
+ * Returns the raw assistant response + normalized token usage.
+ */
+export async function generateGemini(args: ProviderArgs): Promise<ProviderResult> {
+  const { apiKey, model, systemPrompt, messages, timeoutMs } = args
+  const cleanKey = apiKey.trim().replace(/^["']|["']$/g, '')
+  let rawModel = model?.trim() || 'gemini-3.8-flash'
+  // gemini-2.5-flash is no longer available to new users according to Google's API notice
+  if (rawModel === 'gemini-2.5-flash' || rawModel === 'models/gemini-2.5-flash') {
+    rawModel = 'gemini-3.8-flash'
+  }
+  const activeModel = rawModel.replace(/^models\//, '')
+
+  // Step 1: Try Native Gemini REST first (fastest direct Google API)
+  let nativeErr: unknown
+  try {
+    return await callNativeGemini(
+      cleanKey,
+      activeModel,
+      systemPrompt,
+      messages,
+      Math.min(timeoutMs, 15_000),
+    )
+  } catch (err) {
+    nativeErr = err
+
+    // If API key is definitely invalid, fail fast
+    if (err instanceof AiError && err.code === 'invalid_key') {
+      throw err
+    }
+
+    // If model not found or restricted, try gemini-3.8-flash
+    if (
+      activeModel !== 'gemini-3.8-flash' &&
+      err instanceof AiError &&
+      (err.message.includes('not found') ||
+        err.message.includes('not supported') ||
+        err.message.includes('no longer available'))
+    ) {
+      try {
+        return await callNativeGemini(
+          cleanKey,
+          'gemini-3.8-flash',
+          systemPrompt,
+          messages,
+          Math.min(timeoutMs, 15_000),
+        )
+      } catch (retryErr) {
+        if (retryErr instanceof AiError && retryErr.code === 'invalid_key') {
+          throw retryErr
+        }
+      }
+    }
+  }
+
+  // Step 2: Try OpenAI-compatible endpoint as fallback
+  try {
+    return await callOpenAiGemini(
+      cleanKey,
+      activeModel,
+      systemPrompt,
+      messages,
+      timeoutMs,
+    )
+  } catch (openAiErr) {
+    if (openAiErr instanceof AiError && openAiErr.code === 'invalid_key') {
+      throw openAiErr
+    }
+
+    // If OpenAI also failed on model availability, try gemini-3.8-flash on OpenAI endpoint
+    if (
+      activeModel !== 'gemini-3.8-flash' &&
+      openAiErr instanceof AiError &&
+      (openAiErr.message.includes('no longer available') ||
+        openAiErr.message.includes('not found') ||
+        openAiErr.message.includes('gemini-2.5-flash'))
+    ) {
+      try {
+        return await callOpenAiGemini(
+          cleanKey,
+          'gemini-3.8-flash',
+          systemPrompt,
+          messages,
+          timeoutMs,
+        )
+      } catch {
+        // Fall through to error resolution below
+      }
+    }
+
+    // Throw the most specific typed error
+    if (openAiErr instanceof AiError) throw openAiErr
+    if (nativeErr instanceof AiError) throw nativeErr
+    throw toNetworkError(openAiErr)
+  }
 }
