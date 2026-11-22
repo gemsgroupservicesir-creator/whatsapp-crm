@@ -110,7 +110,11 @@ async function callNativeGemini(
 export async function generateGemini(args: ProviderArgs): Promise<ProviderResult> {
   const { apiKey, model, systemPrompt, messages, timeoutMs } = args
   const cleanKey = apiKey.trim().replace(/^["']|["']$/g, '')
-  const rawModel = model?.trim() || 'gemini-2.5-flash'
+  let rawModel = model?.trim() || 'gemini-3.8-flash'
+  // gemini-2.5-flash is no longer available to new users according to Google's API notice
+  if (rawModel === 'gemini-2.5-flash' || rawModel === 'models/gemini-2.5-flash') {
+    rawModel = 'gemini-3.8-flash'
+  }
   const activeModel = rawModel.replace(/^models\//, '')
 
   const promptMessages: { role: 'system' | 'user' | 'assistant'; content: string }[] = []
@@ -145,6 +149,46 @@ export async function generateGemini(args: ProviderArgs): Promise<ProviderResult
       throw openAiErr
     }
 
+    // If Gemini informs us a model is no longer available or not found, retry with gemini-3.8-flash
+    if (
+      activeModel !== 'gemini-3.8-flash' &&
+      (openAiErr.message.includes('no longer available') ||
+        openAiErr.message.includes('not found') ||
+        openAiErr.message.includes('gemini-2.5-flash'))
+    ) {
+      try {
+        const retryRes = await fetch(GEMINI_OPENAI_URL, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${cleanKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'gemini-3.8-flash',
+            messages: promptMessages,
+            max_tokens: MAX_OUTPUT_TOKENS,
+          }),
+          signal: AbortSignal.timeout(timeoutMs),
+        })
+        if (retryRes.ok) {
+          const retryData = (await retryRes.json().catch(() => null)) as GeminiChatResponse | null
+          const retryText = retryData?.choices?.[0]?.message?.content
+          if (retryText && typeof retryText === 'string' && retryText.trim()) {
+            return {
+              text: retryText,
+              usage: normalizeUsage({
+                prompt: retryData?.usage?.prompt_tokens,
+                completion: retryData?.usage?.completion_tokens,
+                total: retryData?.usage?.total_tokens,
+              }),
+            }
+          }
+        }
+      } catch {
+        // Fall through to native REST
+      }
+    }
+
     // Try native Gemini REST endpoint as fallback
     try {
       return await callNativeGemini(
@@ -155,15 +199,17 @@ export async function generateGemini(args: ProviderArgs): Promise<ProviderResult
         timeoutMs,
       )
     } catch (nativeErr) {
-      // If model not found and model was gemini-2.5-flash, attempt gemini-1.5-flash fallback
+      // If model not found or restricted, attempt gemini-3.8-flash
       if (
-        activeModel !== 'gemini-1.5-flash' &&
+        activeModel !== 'gemini-3.8-flash' &&
         nativeErr instanceof AiError &&
-        (nativeErr.message.includes('not found') || nativeErr.message.includes('not supported'))
+        (nativeErr.message.includes('not found') ||
+          nativeErr.message.includes('not supported') ||
+          nativeErr.message.includes('no longer available'))
       ) {
         return await callNativeGemini(
           cleanKey,
-          'gemini-1.5-flash',
+          'gemini-3.8-flash',
           systemPrompt,
           messages,
           timeoutMs,
