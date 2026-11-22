@@ -333,6 +333,11 @@ export function AiConfig() {
                   placeholder={AI_PROVIDER_DEFAULT_MODEL[provider]}
                   disabled={disabled}
                 />
+                {provider === 'gemini' && (
+                  <p className="text-[11px] text-muted-foreground">
+                    Recommended: <code>gemini-2.5-flash</code> or <code>gemini-1.5-flash</code>
+                  </p>
+                )}
               </div>
 
               {provider === 'openai_compatible' && (

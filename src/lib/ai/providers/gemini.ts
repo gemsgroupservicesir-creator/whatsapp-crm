@@ -1,4 +1,4 @@
-import { AiError, type ProviderResult } from '../types'
+import { AiError, type ChatMessage, type ProviderResult } from '../types'
 import { MAX_OUTPUT_TOKENS } from '../defaults'
 import {
   mergeConsecutive,
@@ -22,28 +22,114 @@ interface GeminiChatResponse {
   }
 }
 
+interface NativeGeminiResponse {
+  candidates?: {
+    content?: {
+      parts?: { text?: string }[]
+    }
+  }[]
+  usageMetadata?: {
+    promptTokenCount?: number
+    candidatesTokenCount?: number
+    totalTokenCount?: number
+  }
+}
+
 /**
- * Call Google Gemini API (via Gemini's official OpenAI-compatible endpoint).
+ * Call Google Gemini native REST endpoint.
+ */
+async function callNativeGemini(
+  cleanKey: string,
+  modelName: string,
+  systemPrompt: string | null | undefined,
+  messages: ChatMessage[],
+  timeoutMs: number,
+): Promise<ProviderResult> {
+  const cleanModel = modelName.trim().replace(/^models\//, '')
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${cleanModel}:generateContent?key=${encodeURIComponent(cleanKey)}`
+
+  const contents = messages.map((m) => ({
+    role: m.role === 'assistant' ? 'model' : 'user',
+    parts: [{ text: m.content }],
+  }))
+
+  const body: Record<string, unknown> = {
+    contents,
+    generationConfig: {
+      maxOutputTokens: MAX_OUTPUT_TOKENS,
+    },
+  }
+
+  if (systemPrompt && systemPrompt.trim()) {
+    body.system_instruction = {
+      parts: [{ text: systemPrompt.trim() }],
+    }
+  }
+
+  let res: Response
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': cleanKey,
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
+    })
+  } catch (err) {
+    throw toNetworkError(err)
+  }
+
+  if (!res.ok) {
+    throw await providerHttpError('Google Gemini', res)
+  }
+
+  const data = (await res.json().catch(() => null)) as NativeGeminiResponse | null
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text
+  if (!text || typeof text !== 'string' || !text.trim()) {
+    throw new AiError(t('ai.emptyResponse', { provider: 'Google Gemini' }), {
+      code: 'empty_response',
+    })
+  }
+
+  const usageMetadata = data?.usageMetadata
+  const usage = normalizeUsage({
+    prompt: usageMetadata?.promptTokenCount,
+    completion: usageMetadata?.candidatesTokenCount,
+    total: usageMetadata?.totalTokenCount,
+  })
+
+  return { text, usage }
+}
+
+/**
+ * Call Google Gemini API (tries OpenAI compatibility endpoint first, falls back to native REST).
  * Returns the raw assistant response + normalized token usage.
  */
 export async function generateGemini(args: ProviderArgs): Promise<ProviderResult> {
   const { apiKey, model, systemPrompt, messages, timeoutMs } = args
-  const activeModel = model?.trim() || 'gemini-2.5-flash'
+  const cleanKey = apiKey.trim().replace(/^["']|["']$/g, '')
+  const rawModel = model?.trim() || 'gemini-2.5-flash'
+  const activeModel = rawModel.replace(/^models\//, '')
+
+  const promptMessages: { role: 'system' | 'user' | 'assistant'; content: string }[] = []
+  if (systemPrompt && systemPrompt.trim()) {
+    promptMessages.push({ role: 'system', content: systemPrompt.trim() })
+  }
+  promptMessages.push(...mergeConsecutive(messages))
 
   let res: Response
   try {
     res = await fetch(GEMINI_OPENAI_URL, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: `Bearer ${cleanKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
         model: activeModel,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          ...mergeConsecutive(messages),
-        ],
+        messages: promptMessages,
         max_tokens: MAX_OUTPUT_TOKENS,
       }),
       signal: AbortSignal.timeout(timeoutMs),
@@ -53,7 +139,38 @@ export async function generateGemini(args: ProviderArgs): Promise<ProviderResult
   }
 
   if (!res.ok) {
-    throw await providerHttpError('Google Gemini', res)
+    // If OpenAI-compatible endpoint failed, check if it was an invalid key
+    const openAiErr = await providerHttpError('Google Gemini', res)
+    if (openAiErr.code === 'invalid_key') {
+      throw openAiErr
+    }
+
+    // Try native Gemini REST endpoint as fallback
+    try {
+      return await callNativeGemini(
+        cleanKey,
+        activeModel,
+        systemPrompt,
+        messages,
+        timeoutMs,
+      )
+    } catch (nativeErr) {
+      // If model not found and model was gemini-2.5-flash, attempt gemini-1.5-flash fallback
+      if (
+        activeModel !== 'gemini-1.5-flash' &&
+        nativeErr instanceof AiError &&
+        (nativeErr.message.includes('not found') || nativeErr.message.includes('not supported'))
+      ) {
+        return await callNativeGemini(
+          cleanKey,
+          'gemini-1.5-flash',
+          systemPrompt,
+          messages,
+          timeoutMs,
+        )
+      }
+      throw nativeErr instanceof AiError ? nativeErr : openAiErr
+    }
   }
 
   const data = (await res.json().catch(() => null)) as GeminiChatResponse | null

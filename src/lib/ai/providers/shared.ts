@@ -64,22 +64,34 @@ export async function providerHttpError(
 ): Promise<AiError> {
   let detail = ''
   try {
-    const body = (await res.json()) as { error?: { message?: string } | string }
-    detail =
-      typeof body?.error === 'string'
-        ? body.error
-        : (body?.error?.message ?? '')
+    const raw = (await res.json()) as unknown
+    const body = Array.isArray(raw)
+      ? (raw[0] as Record<string, unknown>)
+      : (raw as Record<string, unknown>)
+    if (typeof body?.error === 'string') {
+      detail = body.error
+    } else if (body?.error && typeof body.error === 'object') {
+      const errObj = body.error as { message?: string }
+      detail = errObj.message ?? ''
+    }
   } catch {
     // Non-JSON error body — fall back to the status line.
   }
 
   const { status } = res
-  const code =
-    status === 401 || status === 403
-      ? 'invalid_key'
-      : status === 429
-        ? 'rate_limited'
-        : 'provider_error'
+  const isKeyError =
+    status === 401 ||
+    status === 403 ||
+    (status === 400 &&
+      (detail.toLowerCase().includes('api key') ||
+        detail.toLowerCase().includes('api_key') ||
+        detail.toLowerCase().includes('authorization')))
+
+  const code = isKeyError
+    ? 'invalid_key'
+    : status === 429
+      ? 'rate_limited'
+      : 'provider_error'
   const base =
     code === 'invalid_key'
       ? t('ai.invalidKey', { provider })
