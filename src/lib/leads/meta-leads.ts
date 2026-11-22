@@ -74,16 +74,51 @@ export async function fetchLeadFromMetaGraphApi(
         fullName = val;
       } else if (name.includes('last_name') && fullName) {
         fullName += ' ' + val;
-      } else if (name.includes('phone') || name === 'phone_number') {
+      } else if (
+        name.includes('phone') ||
+        name.includes('whatsapp') ||
+        name.includes('mobile') ||
+        name.includes('contact') ||
+        name.includes('cell') ||
+        name === 'number'
+      ) {
         phone = val;
       } else if (name.includes('email')) {
         email = val;
-      } else if (name.includes('college') || name.includes('university') || name.includes('institute') || name.includes('school') || name.includes('campus')) {
+      } else if (
+        name.includes('college') ||
+        name.includes('university') ||
+        name.includes('institute') ||
+        name.includes('school') ||
+        name.includes('campus') ||
+        name.includes('destination') ||
+        name.includes('institution')
+      ) {
         college = val;
-      } else if (name.includes('course') || name.includes('program') || name.includes('degree') || name.includes('branch') || name.includes('stream') || name.includes('specialization')) {
+      } else if (
+        name.includes('course') ||
+        name.includes('program') ||
+        name.includes('degree') ||
+        name.includes('branch') ||
+        name.includes('stream') ||
+        name.includes('specialization') ||
+        name.includes('study')
+      ) {
         course = val;
       } else if (name.includes('city') || name.includes('location') || name.includes('state')) {
         city = val;
+      }
+    }
+
+    // Fallback: If phone is still not detected, scan for any field value that looks like a phone number
+    if (!phone) {
+      for (const f of fieldData) {
+        const val = Array.isArray(f.values) && f.values.length > 0 ? String(f.values[0]) : '';
+        const digits = val.replace(/\D/g, '');
+        if (digits.length >= 7 && digits.length <= 15 && !val.includes('@')) {
+          phone = val;
+          break;
+        }
       }
     }
 
@@ -393,19 +428,29 @@ export async function handleMetaLeadgenChange(
     return;
   }
 
-  // Fallback to whatsapp_config access_token if no page_access_token set
+  // Fallback: check meta_lead_configs for targetAccountId, then whatsapp_config
   if (!pageAccessToken && targetAccountId) {
-    const { data: waCfg } = await admin
-      .from('whatsapp_config')
-      .select('access_token')
+    const { data: leadCfg } = await admin
+      .from('meta_lead_configs')
+      .select('page_access_token')
       .eq('account_id', targetAccountId)
       .maybeSingle();
 
-    if (waCfg?.access_token) {
-      try {
-        pageAccessToken = decrypt(waCfg.access_token);
-      } catch {
-        // Ignore decrypt errors
+    if (leadCfg?.page_access_token) {
+      pageAccessToken = leadCfg.page_access_token;
+    } else {
+      const { data: waCfg } = await admin
+        .from('whatsapp_config')
+        .select('access_token')
+        .eq('account_id', targetAccountId)
+        .maybeSingle();
+
+      if (waCfg?.access_token) {
+        try {
+          pageAccessToken = decrypt(waCfg.access_token);
+        } catch {
+          // Ignore decrypt errors
+        }
       }
     }
   }

@@ -230,11 +230,21 @@ export async function PATCH(request: Request) {
       }
 
       const leadData = await fetchLeadFromMetaGraphApi(lead.leadgen_id, pageAccessToken);
-      if (!leadData || !leadData.phone) {
+      if (!leadData) {
         return NextResponse.json(
           {
             error:
               'Meta Graph API rejected the token or the lead could not be fetched. Please make sure the token is active and has leads_retrieval permission.',
+          },
+          { status: 400 }
+        );
+      }
+
+      if (!leadData.phone) {
+        return NextResponse.json(
+          {
+            error:
+              'Lead details were fetched from Meta, but no phone number or WhatsApp number was found in the submitted form fields.',
           },
           { status: 400 }
         );
