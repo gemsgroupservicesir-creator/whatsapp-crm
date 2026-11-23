@@ -16,6 +16,8 @@ export interface IncomingLeadPayload {
   leadgenId?: string;
   formId?: string;
   formName?: string;
+  campaignId?: string;
+  campaignName?: string;
   fullName: string;
   phone: string;
   email?: string;
@@ -123,17 +125,26 @@ export async function fetchLeadFromMetaGraphApi(
       }
     }
 
+    const campaignName = (data.campaign_name || data.campaign?.name || '').trim();
+    const campaignId = (data.campaign_id || data.campaign?.id || '').trim();
+    const adName = (data.ad_name || data.ad?.name || '').trim();
+    const adId = (data.ad_id || data.ad?.id || '').trim();
+    const formName = (data.form_name || '').trim();
+
     return {
       leadgenId,
       formId: data.form_id || undefined,
+      formName: formName || undefined,
+      campaignId: campaignId || undefined,
+      campaignName: campaignName || undefined,
       fullName: fullName.trim() || 'Meta Lead',
       phone: phone.trim(),
       email: email.trim() || undefined,
       college: college.trim() || undefined,
       course: course.trim() || undefined,
       city: city.trim() || undefined,
-      adId: data.ad_id || undefined,
-      adName: data.ad_name || undefined,
+      adId: adId || undefined,
+      adName: adName || undefined,
       rawFields,
     };
   } catch (err) {
@@ -152,6 +163,7 @@ export async function matchLeadAssignmentRule(
   accountId: string,
   lead: {
     formName?: string;
+    campaignName?: string;
     college?: string;
     course?: string;
   }
@@ -175,8 +187,10 @@ export async function matchLeadAssignmentRule(
         targetText = lead.course || '';
       } else if (rule.criteria_type === 'form_name') {
         targetText = lead.formName || '';
+      } else if (rule.criteria_type === 'campaign_name') {
+        targetText = lead.campaignName || '';
       } else if (rule.criteria_type === 'any') {
-        targetText = `${lead.formName || ''} ${lead.college || ''} ${lead.course || ''}`;
+        targetText = `${lead.campaignName || ''} ${lead.formName || ''} ${lead.college || ''} ${lead.course || ''}`;
       }
 
       const needle = (rule.match_value || '').trim().toLowerCase();
@@ -236,6 +250,8 @@ export async function processIncomingLead(
       leadgen_id: lead.leadgenId || null,
       form_id: lead.formId || null,
       form_name: lead.formName || 'Meta Instant Form',
+      campaign_name: lead.campaignName || null,
+      ad_name: lead.adName || null,
       full_name: lead.fullName,
       phone: lead.phone,
       email: lead.email || null,
@@ -314,6 +330,7 @@ export async function processIncomingLead(
   try {
     const matchedUserId = await matchLeadAssignmentRule(admin, accountId, {
       formName: lead.formName,
+      campaignName: lead.campaignName,
       college: lead.college,
       course: lead.course,
     });
@@ -353,12 +370,14 @@ export async function processIncomingLead(
     }
   }
 
-  // 7. Log the lead with college, course, city, and assignment info
+  // 7. Log the lead with college, course, city, campaign, and assignment info
   await admin.from('meta_lead_logs').insert({
     account_id: accountId,
     leadgen_id: lead.leadgenId || null,
     form_id: lead.formId || null,
     form_name: lead.formName || 'Meta Instant Form',
+    campaign_name: lead.campaignName || null,
+    ad_name: lead.adName || null,
     full_name: lead.fullName,
     phone: formattedPhone,
     email: lead.email || null,
@@ -687,6 +706,8 @@ export async function handleMetaLeadgenChange(
     leadgen_id: leadgenId,
     form_id: formId,
     form_name: 'Meta Lead Form',
+    campaign_name: typeof val.campaign_name === 'string' ? val.campaign_name : null,
+    ad_name: typeof val.ad_name === 'string' ? val.ad_name : null,
     full_name: 'New Meta Lead',
     phone: 'Pending Token',
     status: 'token_required',

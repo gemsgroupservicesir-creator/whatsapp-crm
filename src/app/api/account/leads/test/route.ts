@@ -48,6 +48,8 @@ export async function POST(request: Request) {
       course?: string;
       city?: string;
       formName?: string;
+      campaignName?: string;
+      adName?: string;
     } | null;
 
     const fullName = body?.fullName?.trim() || 'Test Meta Lead';
@@ -57,6 +59,8 @@ export async function POST(request: Request) {
     const course = body?.course?.trim() || 'B.Tech Computer Science';
     const city = body?.city?.trim() || 'New Delhi';
     const formName = body?.formName?.trim() || 'Sample Meta Instant Form';
+    const campaignName = body?.campaignName?.trim() || 'Higher Education Admissions 2026';
+    const adName = body?.adName?.trim() || 'Direct Admissions Ad 2026';
 
     const result = await processIncomingLead(profile.account_id, {
       fullName,
@@ -66,6 +70,8 @@ export async function POST(request: Request) {
       course,
       city,
       formName,
+      campaignName,
+      adName,
       leadgenId: `test_lead_${Date.now()}`,
       rawFields: {
         full_name: fullName,
@@ -74,6 +80,8 @@ export async function POST(request: Request) {
         college_name: college,
         course_name: course,
         city: city,
+        campaign_name: campaignName,
+        ad_name: adName,
         simulated: 'true',
       },
     });

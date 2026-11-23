@@ -150,6 +150,38 @@ export async function POST(request: Request) {
         ? body.state
         : undefined;
 
+    const campaignName =
+      typeof body.campaignName === 'string'
+        ? body.campaignName
+        : typeof body.campaign_name === 'string'
+        ? body.campaign_name
+        : typeof body.campaign === 'string'
+        ? body.campaign
+        : undefined;
+
+    const campaignId =
+      typeof body.campaignId === 'string'
+        ? body.campaignId
+        : typeof body.campaign_id === 'string'
+        ? body.campaign_id
+        : undefined;
+
+    const adName =
+      typeof body.adName === 'string'
+        ? body.adName
+        : typeof body.ad_name === 'string'
+        ? body.ad_name
+        : typeof body.ad === 'string'
+        ? body.ad
+        : undefined;
+
+    const adId =
+      typeof body.adId === 'string'
+        ? body.adId
+        : typeof body.ad_id === 'string'
+        ? body.ad_id
+        : undefined;
+
     if (phone) {
       let targetAccountId = queryAccountId;
       if (!targetAccountId) {
@@ -171,6 +203,10 @@ export async function POST(request: Request) {
           college,
           course,
           city,
+          campaignId,
+          campaignName,
+          adId,
+          adName,
           leadgenId: typeof body.leadgen_id === 'string' ? body.leadgen_id : undefined,
           formId: typeof body.form_id === 'string' ? body.form_id : undefined,
           rawFields: body as Record<string, string>,

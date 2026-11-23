@@ -28,6 +28,7 @@ import {
   AlertCircle,
   Settings,
   Share2,
+  Megaphone,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -75,6 +76,8 @@ interface Lead {
   leadgen_id: string | null;
   form_id: string | null;
   form_name: string | null;
+  campaign_name: string | null;
+  ad_name: string | null;
   full_name: string;
   phone: string;
   email: string | null;
@@ -100,7 +103,7 @@ interface AssignmentRule {
   name: string;
   is_active: boolean;
   priority: number;
-  criteria_type: "college" | "course" | "form_name" | "any";
+  criteria_type: "college" | "course" | "form_name" | "campaign_name" | "any";
   operator: "contains" | "equals" | "starts_with" | "ends_with";
   match_value: string;
   assign_to_user_id: string;
@@ -128,6 +131,7 @@ export default function LeadsPage() {
   const [colleges, setColleges] = useState<string[]>([]);
   const [courses, setCourses] = useState<string[]>([]);
   const [forms, setForms] = useState<string[]>([]);
+  const [campaigns, setCampaigns] = useState<string[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string>("");
   const [userRole, setUserRole] = useState<string>("");
   const [loading, setLoading] = useState(true);
@@ -137,6 +141,7 @@ export default function LeadsPage() {
   const [search, setSearch] = useState("");
   const [filterCollege, setFilterCollege] = useState("all");
   const [filterCourse, setFilterCourse] = useState("all");
+  const [filterCampaign, setFilterCampaign] = useState("all");
   const [filterStatus, setFilterStatus] = useState("all");
   const [filterAgent, setFilterAgent] = useState("all");
 
@@ -156,7 +161,7 @@ export default function LeadsPage() {
   const [loadingRules, setLoadingRules] = useState(false);
   const [isNewRuleOpen, setIsNewRuleOpen] = useState(false);
   const [ruleName, setRuleName] = useState("");
-  const [criteriaType, setCriteriaType] = useState<"college" | "course" | "form_name" | "any">("college");
+  const [criteriaType, setCriteriaType] = useState<"college" | "course" | "form_name" | "campaign_name" | "any">("college");
   const [operator, setOperator] = useState<"contains" | "equals" | "starts_with" | "ends_with">("contains");
   const [matchValue, setMatchValue] = useState("");
   const [assigneeId, setAssigneeId] = useState("");
@@ -175,6 +180,7 @@ export default function LeadsPage() {
       if (filterStatus !== "all") params.set("status", filterStatus);
       if (filterCollege !== "all") params.set("college", filterCollege);
       if (filterCourse !== "all") params.set("course", filterCourse);
+      if (filterCampaign !== "all") params.set("campaign", filterCampaign);
       if (filterAgent !== "all") params.set("agentId", filterAgent);
       if (search) params.set("search", search);
 
@@ -188,6 +194,7 @@ export default function LeadsPage() {
       setColleges(data.colleges || []);
       setCourses(data.courses || []);
       setForms(data.forms || []);
+      setCampaigns(data.campaigns || []);
       setCurrentUserId(data.currentUserId || "");
       setUserRole(data.userRole || "");
 
@@ -202,7 +209,7 @@ export default function LeadsPage() {
     } finally {
       setLoading(false);
     }
-  }, [activeTab, filterStatus, filterCollege, filterCourse, filterAgent, search]);
+  }, [activeTab, filterStatus, filterCollege, filterCourse, filterCampaign, filterAgent, search]);
 
   const fetchRules = async () => {
     try {
@@ -419,6 +426,8 @@ export default function LeadsPage() {
           college: "Amity University",
           course: "B.Tech Computer Science",
           formName: "College Admissions 2026",
+          campaignName: "Higher Education Admissions 2026",
+          adName: "Direct Admissions Ad 2026",
         }),
       });
       if (!res.ok) throw new Error("Simulation failed");
@@ -749,7 +758,7 @@ export default function LeadsPage() {
             <div className="relative flex-1">
               <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Search leads by name, phone, email, college, course..."
+                placeholder="Search leads by name, phone, email, college, campaign..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="pl-9 h-9"
@@ -757,6 +766,20 @@ export default function LeadsPage() {
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
+              {/* Campaign Filter */}
+              <select
+                value={filterCampaign}
+                onChange={(e) => setFilterCampaign(e.target.value)}
+                className="h-9 px-3 rounded-md border border-input bg-background text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+              >
+                <option value="all">All Campaigns ({campaigns.length})</option>
+                {campaigns.map((camp) => (
+                  <option key={camp} value={camp}>
+                    {camp}
+                  </option>
+                ))}
+              </select>
+
               {/* College Filter */}
               <select
                 value={filterCollege}
@@ -853,6 +876,7 @@ export default function LeadsPage() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Student / Lead</TableHead>
+                        <TableHead>Campaign</TableHead>
                         <TableHead>College & Course</TableHead>
                         <TableHead>Meta Form</TableHead>
                         <TableHead>Status</TableHead>
@@ -898,6 +922,34 @@ export default function LeadsPage() {
                                     </span>
                                   )}
                                 </div>
+                              </div>
+                            </TableCell>
+
+                            {/* Campaign */}
+                            <TableCell>
+                              <div className="flex flex-col gap-0.5 max-w-[200px]">
+                                {lead.campaign_name ? (
+                                  <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground truncate">
+                                    <Megaphone className="h-3.5 w-3.5 text-purple-600 dark:text-purple-400 shrink-0" />
+                                    <span className="truncate" title={lead.campaign_name}>
+                                      {lead.campaign_name}
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground italic">
+                                    <Megaphone className="h-3.5 w-3.5 opacity-40 shrink-0" />
+                                    <span>Direct / Organic</span>
+                                  </div>
+                                )}
+                                {lead.ad_name ? (
+                                  <span className="text-[11px] text-muted-foreground truncate pl-5" title={lead.ad_name}>
+                                    Ad: {lead.ad_name}
+                                  </span>
+                                ) : (
+                                  <Badge variant="outline" className="w-fit text-[10px] px-1 py-0 text-muted-foreground ml-5">
+                                    Paid Campaign
+                                  </Badge>
+                                )}
                               </div>
                             </TableCell>
 
@@ -1155,6 +1207,17 @@ export default function LeadsPage() {
                 <p className="font-semibold text-foreground">{selectedLead?.phone}</p>
               </div>
               <div>
+                <span className="text-muted-foreground">Campaign:</span>
+                <p className="font-semibold text-foreground flex items-center gap-1">
+                  <Megaphone className="h-3 w-3 text-purple-500" />
+                  {selectedLead?.campaign_name || "—"}
+                </p>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Ad Name:</span>
+                <p className="font-semibold text-foreground">{selectedLead?.ad_name || "—"}</p>
+              </div>
+              <div>
                 <span className="text-muted-foreground">College:</span>
                 <p className="font-semibold text-foreground">{selectedLead?.college || "—"}</p>
               </div>
@@ -1258,6 +1321,7 @@ export default function LeadsPage() {
                 >
                   <option value="college">College Name</option>
                   <option value="course">Course Name</option>
+                  <option value="campaign_name">Campaign Name</option>
                   <option value="form_name">Form Name</option>
                   <option value="any">Any Field</option>
                 </select>

@@ -47,6 +47,7 @@ export async function GET(request: Request) {
     const status = url.searchParams.get('status');
     const college = url.searchParams.get('college');
     const course = url.searchParams.get('course');
+    const campaign = url.searchParams.get('campaign');
     const agentId = url.searchParams.get('agentId');
     const search = url.searchParams.get('search')?.trim().toLowerCase();
 
@@ -93,6 +94,10 @@ export async function GET(request: Request) {
       query = query.eq('course', course);
     }
 
+    if (campaign && campaign !== 'all') {
+      query = query.eq('campaign_name', campaign);
+    }
+
     const { data: rawLeads, error: leadsError } = await query.limit(200);
 
     if (leadsError) {
@@ -102,10 +107,10 @@ export async function GET(request: Request) {
 
     let leads = rawLeads || [];
 
-    // In-memory text search over name, phone, email, college, course, form
+    // In-memory text search over name, phone, email, college, course, form, campaign, ad
     if (search) {
       leads = leads.filter((l) => {
-        const text = `${l.full_name || ''} ${l.phone || ''} ${l.email || ''} ${l.college || ''} ${l.course || ''} ${l.form_name || ''}`.toLowerCase();
+        const text = `${l.full_name || ''} ${l.phone || ''} ${l.email || ''} ${l.college || ''} ${l.course || ''} ${l.form_name || ''} ${l.campaign_name || ''} ${l.ad_name || ''}`.toLowerCase();
         return text.includes(search);
       });
     }
@@ -119,7 +124,7 @@ export async function GET(request: Request) {
     // 3. Stats for header cards
     const { data: allAccountLeads } = await admin
       .from('meta_lead_logs')
-      .select('id, assigned_to, lead_status, college, course, form_name')
+      .select('id, assigned_to, lead_status, college, course, form_name, campaign_name')
       .eq('account_id', accountId);
 
     const all = allAccountLeads || [];
@@ -134,6 +139,7 @@ export async function GET(request: Request) {
     const colleges = Array.from(new Set(all.map((l) => l.college).filter(Boolean))).sort();
     const courses = Array.from(new Set(all.map((l) => l.course).filter(Boolean))).sort();
     const forms = Array.from(new Set(all.map((l) => l.form_name).filter(Boolean))).sort();
+    const campaigns = Array.from(new Set(all.map((l) => l.campaign_name).filter(Boolean))).sort();
 
     return NextResponse.json({
       leads: enrichedLeads,
@@ -142,6 +148,7 @@ export async function GET(request: Request) {
       colleges,
       courses,
       forms,
+      campaigns,
       currentUserId: user.id,
       userRole: profile.account_role,
     });
