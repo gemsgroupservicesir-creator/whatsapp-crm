@@ -83,8 +83,33 @@ export async function POST(request: Request) {
       config,
       latestUserMessage(messages),
     )
+
+    let extraContext = ''
+    const campaignPrompt = typeof body?.campaignPrompt === 'string' ? body.campaignPrompt.trim() : ''
+    const studentContext = typeof body?.studentContext === 'object' && body.studentContext !== null ? body.studentContext : null
+
+    if (campaignPrompt || studentContext) {
+      const parts: string[] = []
+      parts.push('STUDENT INQUIRY CONTEXT:')
+      if (studentContext?.name) parts.push(`- Student Name: ${studentContext.name}`)
+      if (studentContext?.course) parts.push(`- Course Interested: ${studentContext.course}`)
+      if (studentContext?.college) parts.push(`- Target Institution: ${studentContext.college}`)
+      if (studentContext?.city) parts.push(`- City: ${studentContext.city}`)
+      if (studentContext?.campaignName) parts.push(`- Marketing Campaign: ${studentContext.campaignName}`)
+      if (studentContext?.counselorName) parts.push(`- Dedicated Admission Counselor: ${studentContext.counselorName}`)
+
+      if (campaignPrompt) {
+        parts.push(`\nCAMPAIGN ADMISSION GUIDELINES:\n${campaignPrompt}`)
+      } else {
+        parts.push(
+          '\nADMISSION GUIDELINES:\nAct as an expert, warm, and helpful educational admission assistant. Answer the student regarding courses, eligibility, fee structures, scholarships, and admission procedures.'
+        )
+      }
+      extraContext = `\n\n[CAMPAIGN LEAD CONTEXT]\n${parts.join('\n')}`
+    }
+
     const systemPrompt = buildSystemPrompt({
-      userPrompt: config.systemPrompt,
+      userPrompt: (config.systemPrompt || '') + extraContext,
       mode: 'auto_reply',
       knowledge,
     })

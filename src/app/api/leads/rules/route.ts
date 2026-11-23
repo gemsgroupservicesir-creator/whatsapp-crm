@@ -134,6 +134,12 @@ export async function POST(request: Request) {
       );
     }
 
+    const followupTemplateName = body.followup_template_name
+      ? String(body.followup_template_name).trim()
+      : 'education_admissions_welcome';
+    const aiAutoChatEnabled = body.ai_auto_chat_enabled !== false;
+    const aiCampaignPrompt = body.ai_campaign_prompt ? String(body.ai_campaign_prompt).trim() : null;
+
     const { data: newRule, error: insertError } = await admin
       .from('lead_assignment_rules')
       .insert({
@@ -145,6 +151,9 @@ export async function POST(request: Request) {
         assign_to_user_id: assignToUserId,
         priority,
         is_active: isActive,
+        followup_template_name: followupTemplateName,
+        ai_auto_chat_enabled: aiAutoChatEnabled,
+        ai_campaign_prompt: aiCampaignPrompt,
       })
       .select('*')
       .single();
@@ -213,6 +222,19 @@ export async function PATCH(request: Request) {
     if ('assign_to_user_id' in body) updates.assign_to_user_id = body.assign_to_user_id;
     if ('priority' in body) updates.priority = body.priority;
     if ('is_active' in body) updates.is_active = Boolean(body.is_active);
+    if ('followup_template_name' in body) {
+      updates.followup_template_name = body.followup_template_name
+        ? String(body.followup_template_name).trim()
+        : 'education_admissions_welcome';
+    }
+    if ('ai_auto_chat_enabled' in body) {
+      updates.ai_auto_chat_enabled = Boolean(body.ai_auto_chat_enabled);
+    }
+    if ('ai_campaign_prompt' in body) {
+      updates.ai_campaign_prompt = body.ai_campaign_prompt
+        ? String(body.ai_campaign_prompt).trim()
+        : null;
+    }
 
     const { data: updatedRule, error: updateError } = await admin
       .from('lead_assignment_rules')

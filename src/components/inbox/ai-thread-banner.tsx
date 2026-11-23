@@ -122,9 +122,6 @@ export function AiThreadBanner({
     );
   }
 
-  // Active, but a human already owns it → the bot won't fire; no banner.
-  if (assignedAgentId) return null;
-
   // Active on this thread.
   return (
     <Banner tone="primary">

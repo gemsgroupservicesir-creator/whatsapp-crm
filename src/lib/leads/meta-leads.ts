@@ -172,7 +172,19 @@ export async function fetchLeadFromMetaGraphApi(
  * Evaluates College Name, Course Name, Form Name, or Any field in priority order.
  * Returns the matched agent user_id or null.
  */
-export async function matchLeadAssignmentRule(
+export interface MatchedAssignmentRule {
+  id: string;
+  name: string;
+  assign_to_user_id: string;
+  followup_template_name?: string | null;
+  ai_auto_chat_enabled?: boolean;
+  ai_campaign_prompt?: string | null;
+}
+
+/**
+ * Finds the matching active lead assignment rule for a lead payload, including campaign AI follow-up config.
+ */
+export async function findMatchingLeadAssignmentRule(
   admin: SupabaseClient,
   accountId: string,
   lead: {
@@ -181,7 +193,7 @@ export async function matchLeadAssignmentRule(
     college?: string;
     course?: string;
   }
-): Promise<string | null> {
+): Promise<MatchedAssignmentRule | null> {
   try {
     const { data: rules } = await admin
       .from('lead_assignment_rules')
@@ -230,7 +242,14 @@ export async function matchLeadAssignmentRule(
       }
 
       if (matched && rule.assign_to_user_id) {
-        return rule.assign_to_user_id;
+        return {
+          id: rule.id,
+          name: rule.name,
+          assign_to_user_id: rule.assign_to_user_id,
+          followup_template_name: rule.followup_template_name || 'education_admissions_welcome',
+          ai_auto_chat_enabled: rule.ai_auto_chat_enabled !== false,
+          ai_campaign_prompt: rule.ai_campaign_prompt || null,
+        };
       }
     }
   } catch (err) {
@@ -238,6 +257,20 @@ export async function matchLeadAssignmentRule(
   }
 
   return null;
+}
+
+export async function matchLeadAssignmentRule(
+  admin: SupabaseClient,
+  accountId: string,
+  lead: {
+    formName?: string;
+    campaignName?: string;
+    college?: string;
+    course?: string;
+  }
+): Promise<string | null> {
+  const match = await findMatchingLeadAssignmentRule(admin, accountId, lead);
+  return match?.assign_to_user_id || null;
 }
 
 /**
@@ -289,16 +322,16 @@ export async function applyLeadAssignmentRules(
     const userToProfileMap = new Map((profiles || []).map((p) => [p.user_id, p.id]));
 
     for (const lead of leads) {
-      const matchedUserId = await matchLeadAssignmentRule(admin, accountId, {
+      const matchedRule = await findMatchingLeadAssignmentRule(admin, accountId, {
         formName: lead.form_name || undefined,
         campaignName: lead.campaign_name || undefined,
         college: lead.college || undefined,
         course: lead.course || undefined,
       });
 
-      if (matchedUserId) {
+      if (matchedRule?.assign_to_user_id) {
         assignedCount++;
-        matchedLeads.push({ id: lead.id, name: lead.full_name, assignedTo: matchedUserId });
+        matchedLeads.push({ id: lead.id, name: lead.full_name, assignedTo: matchedRule.assign_to_user_id });
 
         const now = new Date().toISOString();
 
@@ -306,23 +339,27 @@ export async function applyLeadAssignmentRules(
         await admin
           .from('meta_lead_logs')
           .update({
-            assigned_to: matchedUserId,
+            assigned_to: matchedRule.assign_to_user_id,
             assigned_at: now,
+            ai_chat_enabled: matchedRule.ai_auto_chat_enabled,
             updated_at: now,
           })
           .eq('id', lead.id);
 
-        // 2. Update conversation
+        // 2. Update conversation: assign agent and ensure AI auto-reply is active for inbound replies
         if (lead.conversation_id) {
           await admin
             .from('conversations')
-            .update({ assigned_agent_id: matchedUserId })
+            .update({
+              assigned_agent_id: matchedRule.assign_to_user_id,
+              ai_autoreply_disabled: false,
+            })
             .eq('id', lead.conversation_id);
         }
 
         // 3. Update pipeline deal if exists
         if (lead.contact_id) {
-          const profileId = userToProfileMap.get(matchedUserId);
+          const profileId = userToProfileMap.get(matchedRule.assign_to_user_id);
           if (profileId) {
             await admin
               .from('deals')
@@ -439,21 +476,25 @@ export async function processIncomingLead(
     console.warn('[MetaLeads] Could not resolve conversation:', err);
   }
 
-  // 5. Auto-assign lead to agent based on rules (College, Course, Form Name)
+  // 5. Auto-assign lead to agent based on rules (College, Course, Form Name, Campaign Name)
+  let matchedRule: MatchedAssignmentRule | null = null;
   let assignedTo: string | undefined;
   try {
-    const matchedUserId = await matchLeadAssignmentRule(admin, accountId, {
+    matchedRule = await findMatchingLeadAssignmentRule(admin, accountId, {
       formName: lead.formName,
       campaignName: lead.campaignName,
       college: lead.college,
       course: lead.course,
     });
-    if (matchedUserId) {
-      assignedTo = matchedUserId;
+    if (matchedRule?.assign_to_user_id) {
+      assignedTo = matchedRule.assign_to_user_id;
       if (conversationId) {
         await admin
           .from('conversations')
-          .update({ assigned_agent_id: matchedUserId })
+          .update({
+            assigned_agent_id: matchedRule.assign_to_user_id,
+            ai_autoreply_disabled: false,
+          })
           .eq('id', conversationId);
       }
     }
@@ -461,30 +502,44 @@ export async function processIncomingLead(
     console.warn('[MetaLeads] Auto-assignment failed:', assignErr);
   }
 
-  // 6. Check if auto-WhatsApp is enabled & configured
+  // 6. Check if auto-WhatsApp follow-up is enabled & configured
   let whatsappSent = false;
   let whatsappError: string | undefined;
 
-  if (
-    config?.auto_whatsapp_enabled &&
-    config?.auto_template_name &&
-    conversationId
-  ) {
+  // Prioritize rule-specific follow-up template, then global config template, fallback to education_admissions_welcome
+  const templateName =
+    matchedRule?.followup_template_name ||
+    config?.auto_template_name ||
+    'education_admissions_welcome';
+
+  const shouldSendWhatsApp = Boolean(
+    (matchedRule && matchedRule.followup_template_name) ||
+    (config?.auto_whatsapp_enabled && config?.auto_template_name) ||
+    config?.auto_whatsapp_enabled !== false
+  );
+
+  if (shouldSendWhatsApp && conversationId) {
     try {
       await sendMessageToConversation(admin, accountId, {
         conversationId,
         messageType: 'template',
-        templateName: config.auto_template_name,
+        templateName,
         templateParams: [lead.fullName || 'Student'],
       });
       whatsappSent = true;
+
+      // Ensure AI auto-reply is active on this thread for incoming replies
+      await admin
+        .from('conversations')
+        .update({ ai_autoreply_disabled: false })
+        .eq('id', conversationId);
     } catch (sendErr: unknown) {
       whatsappError = sendErr instanceof Error ? sendErr.message : String(sendErr);
       console.error('[MetaLeads] Auto-reply send failed:', sendErr);
     }
   }
 
-  // 7. Log the lead with college, course, city, campaign, and assignment info
+  // 7. Log the lead with college, course, city, campaign, assignment info, and AI auto-chat status
   await admin.from('meta_lead_logs').insert({
     account_id: accountId,
     leadgen_id: lead.leadgenId || null,
@@ -506,6 +561,8 @@ export async function processIncomingLead(
     assigned_to: assignedTo || null,
     assigned_at: assignedTo ? new Date().toISOString() : null,
     whatsapp_sent: whatsappSent,
+    ai_chat_enabled: matchedRule ? matchedRule.ai_auto_chat_enabled : true,
+    ai_followup_status: whatsappSent ? 'sent' : whatsappError ? 'failed' : 'pending',
     error_message: whatsappError || null,
   });
 

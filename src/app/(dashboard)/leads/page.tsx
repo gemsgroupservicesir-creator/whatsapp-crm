@@ -29,6 +29,7 @@ import {
   Settings,
   Share2,
   Megaphone,
+  Send,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -107,6 +108,9 @@ interface AssignmentRule {
   operator: "contains" | "equals" | "starts_with" | "ends_with";
   match_value: string;
   assign_to_user_id: string;
+  followup_template_name?: string;
+  ai_auto_chat_enabled?: boolean;
+  ai_campaign_prompt?: string | null;
   created_at: string;
   agent?: Agent | null;
 }
@@ -167,6 +171,9 @@ export default function LeadsPage() {
   const [matchValue, setMatchValue] = useState("");
   const [assigneeId, setAssigneeId] = useState("");
   const [rulePriority, setRulePriority] = useState(1);
+  const [ruleFollowupTemplate, setRuleFollowupTemplate] = useState("education_admissions_welcome");
+  const [ruleAiChatEnabled, setRuleAiChatEnabled] = useState(true);
+  const [ruleAiCampaignPrompt, setRuleAiCampaignPrompt] = useState("");
   const [savingRule, setSavingRule] = useState(false);
 
   // Test Simulator state
@@ -384,6 +391,9 @@ export default function LeadsPage() {
           match_value: matchValue.trim(),
           assign_to_user_id: assigneeId,
           priority: Number(rulePriority) || 1,
+          followup_template_name: ruleFollowupTemplate,
+          ai_auto_chat_enabled: ruleAiChatEnabled,
+          ai_campaign_prompt: ruleAiCampaignPrompt.trim() || null,
         }),
       });
       if (!res.ok) {
@@ -394,6 +404,7 @@ export default function LeadsPage() {
       setIsNewRuleOpen(false);
       setRuleName("");
       setMatchValue("");
+      setRuleAiCampaignPrompt("");
       fetchRules();
     } catch (err: any) {
       toast.error(err.message || "Could not save rule");
@@ -804,7 +815,8 @@ export default function LeadsPage() {
                     <TableRow>
                       <TableHead>Rule Name</TableHead>
                       <TableHead>Condition</TableHead>
-                      <TableHead>Assigned Agent</TableHead>
+                      <TableHead>Assigned Counselor</TableHead>
+                      <TableHead>Follow-up & AI</TableHead>
                       <TableHead>Priority</TableHead>
                       <TableHead>Status</TableHead>
                       {isAdminOrOwner && <TableHead className="text-right">Actions</TableHead>}
@@ -833,6 +845,30 @@ export default function LeadsPage() {
                               </AvatarFallback>
                             </Avatar>
                             <span className="text-sm">{rule.agent?.fullName || "Assigned Agent"}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                              <Send className="h-3 w-3 text-emerald-600 shrink-0" />
+                              <span className="font-mono text-[11px] truncate max-w-[150px]" title={rule.followup_template_name || "education_admissions_welcome"}>
+                                {rule.followup_template_name || "education_admissions_welcome"}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <Badge
+                                variant="secondary"
+                                className={cn(
+                                  "text-[10px] px-1.5 py-0 flex items-center gap-1 font-normal",
+                                  rule.ai_auto_chat_enabled !== false
+                                    ? "bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20"
+                                    : "bg-muted text-muted-foreground"
+                                )}
+                              >
+                                <Sparkles className="h-2.5 w-2.5" />
+                                {rule.ai_auto_chat_enabled !== false ? "AI Auto-Chat Active" : "AI Paused"}
+                              </Badge>
+                            </div>
                           </div>
                         </TableCell>
                         <TableCell>
@@ -1509,6 +1545,46 @@ export default function LeadsPage() {
                   </option>
                 ))}
               </select>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium">Follow-up WhatsApp Template</label>
+              <select
+                value={ruleFollowupTemplate}
+                onChange={(e) => setRuleFollowupTemplate(e.target.value)}
+                className="h-9 px-3 rounded-md border border-input bg-background text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+              >
+                <option value="education_admissions_welcome">
+                  education_admissions_welcome (Admissions Desk Welcome)
+                </option>
+                <option value="education_scholarship_inquiry">
+                  education_scholarship_inquiry (Scholarship Desk Inquiry)
+                </option>
+              </select>
+              <span className="text-[11px] text-muted-foreground">
+                Sent to the student immediately when their lead is received.
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between p-2.5 rounded-lg border border-border bg-card">
+              <div>
+                <span className="text-xs font-medium text-foreground block">Inbound AI Auto-Chat</span>
+                <span className="text-[11px] text-muted-foreground">
+                  AI automatically answers student questions when they reply on WhatsApp.
+                </span>
+              </div>
+              <Switch checked={ruleAiChatEnabled} onCheckedChange={setRuleAiChatEnabled} />
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium">Campaign AI Guidance (Optional)</label>
+              <Textarea
+                placeholder="Guidance for Gemini AI: e.g. Mention MBA specializations, merit scholarships up to 30%, guide them to counselor..."
+                value={ruleAiCampaignPrompt}
+                onChange={(e) => setRuleAiCampaignPrompt(e.target.value)}
+                rows={3}
+                className="text-xs"
+              />
             </div>
 
             <div className="flex flex-col gap-1">

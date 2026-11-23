@@ -64,22 +64,29 @@ export async function dispatchInboundToAiReply(
     const config = await loadAiConfig(db, accountId)
     if (!config || !config.autoReplyEnabled) return
 
-    // Deterministic, user-configured responders win over the LLM — the
-    // caller already excludes messages a Flow consumed. Message-level
-    // automations (`new_message_received` / `keyword_match`) are
-    // dispatched independently for this same inbound and may send their
-    // own reply, so if the account has any active one we stand down to
-    // avoid double-texting the customer. (Relationship triggers like
-    // `first_inbound_message` don't count — they're not per-message
-    // auto-responders.)
-    const { data: autoResponders } = await db
-      .from('automations')
-      .select('id')
-      .eq('account_id', accountId)
-      .eq('is_active', true)
-      .in('trigger_type', ['new_message_received', 'keyword_match'])
+    // Check if this conversation belongs to a Meta campaign lead
+    const { data: leadLog } = await db
+      .from('meta_lead_logs')
+      .select('id, full_name, college, course, city, campaign_name, form_name, assigned_to, ai_chat_enabled')
+      .eq('conversation_id', conversationId)
+      .order('created_at', { ascending: false })
       .limit(1)
-    if (autoResponders && autoResponders.length > 0) return
+      .maybeSingle()
+
+    const isCampaignLead = Boolean(leadLog && leadLog.ai_chat_enabled !== false)
+
+    // Deterministic, user-configured responders win over the LLM for standard threads.
+    // For campaign leads, AI auto-chat is explicitly enabled according to the campaign.
+    if (!isCampaignLead) {
+      const { data: autoResponders } = await db
+        .from('automations')
+        .select('id')
+        .eq('account_id', accountId)
+        .eq('is_active', true)
+        .in('trigger_type', ['new_message_received', 'keyword_match'])
+        .limit(1)
+      if (autoResponders && autoResponders.length > 0) return
+    }
 
     const { data: conv, error: convErr } = await db
       .from('conversations')
@@ -87,7 +94,10 @@ export async function dispatchInboundToAiReply(
       .eq('id', conversationId)
       .maybeSingle()
     if (convErr || !conv) return
-    if (conv.assigned_agent_id) return // a human owns this thread
+
+    // For non-campaign threads, an assigned human owns the thread.
+    // For campaign leads, the AI acts as the counselor's digital assistant until explicitly paused ("Take over").
+    if (!isCampaignLead && conv.assigned_agent_id) return
     if (conv.ai_autoreply_disabled) return // handed off / turned off here
     // Cheap early-out; the authoritative cap check is the atomic claim
     // below (this read can race a concurrent inbound).
@@ -130,8 +140,75 @@ export async function dispatchInboundToAiReply(
       latestUserMessage(messages),
     )
 
+    // Build rich campaign & student context if this is a campaign lead
+    let campaignContext = ''
+    if (isCampaignLead && leadLog) {
+      let campaignPrompt = ''
+      let counselorName = ''
+
+      // Fetch matching campaign rule prompt
+      const { data: rules } = await db
+        .from('lead_assignment_rules')
+        .select('criteria_type, operator, match_value, ai_campaign_prompt')
+        .eq('account_id', accountId)
+        .eq('is_active', true)
+        .order('priority', { ascending: true })
+
+      if (rules) {
+        for (const r of rules) {
+          if (!r.ai_campaign_prompt) continue
+          let valToTest = ''
+          if (r.criteria_type === 'campaign_name') valToTest = leadLog.campaign_name || ''
+          else if (r.criteria_type === 'college') valToTest = leadLog.college || ''
+          else if (r.criteria_type === 'course') valToTest = leadLog.course || ''
+          else if (r.criteria_type === 'form_name') valToTest = leadLog.form_name || ''
+          else if (r.criteria_type === 'any') {
+            valToTest = `${leadLog.campaign_name || ''} ${leadLog.college || ''} ${leadLog.course || ''} ${leadLog.form_name || ''}`
+          }
+
+          const needle = (r.match_value || '').toLowerCase().trim()
+          const haystack = valToTest.toLowerCase().trim()
+          if (needle && (haystack.includes(needle) || r.criteria_type === 'any')) {
+            campaignPrompt = r.ai_campaign_prompt
+            break
+          }
+        }
+      }
+
+      // Fetch counselor name
+      const assignedUserId = conv.assigned_agent_id || leadLog.assigned_to
+      if (assignedUserId) {
+        const { data: prof } = await db
+          .from('profiles')
+          .select('full_name')
+          .eq('user_id', assignedUserId)
+          .maybeSingle()
+        if (prof?.full_name) counselorName = prof.full_name
+      }
+
+      const parts: string[] = []
+      parts.push(`STUDENT INQUIRY CONTEXT:`)
+      parts.push(`- Student Name: ${leadLog.full_name || 'Student'}`)
+      if (leadLog.course) parts.push(`- Course Interested: ${leadLog.course}`)
+      if (leadLog.college) parts.push(`- Target Institution: ${leadLog.college}`)
+      if (leadLog.city) parts.push(`- City/Location: ${leadLog.city}`)
+      if (leadLog.campaign_name) parts.push(`- Marketing Campaign: ${leadLog.campaign_name}`)
+      if (counselorName) parts.push(`- Dedicated Admission Counselor: ${counselorName}`)
+
+      if (campaignPrompt) {
+        parts.push(`\nCAMPAIGN ADMISSION GUIDELINES:\n${campaignPrompt}`)
+      } else {
+        parts.push(
+          `\nADMISSION GUIDELINES:\nAct as an expert, warm, and helpful educational admission assistant. Answer the student's questions regarding courses, eligibility, fee structures, scholarships, and admission procedures. Offer to verify their eligibility or arrange a personal counseling consultation with Counselor ${
+            counselorName || 'our admissions team'
+          }.`
+        )
+      }
+      campaignContext = `\n\n[CAMPAIGN LEAD CONTEXT]\n${parts.join('\n')}`
+    }
+
     const systemPrompt = buildSystemPrompt({
-      userPrompt: config.systemPrompt,
+      userPrompt: (config.systemPrompt || '') + campaignContext,
       mode: 'auto_reply',
       knowledge,
     })

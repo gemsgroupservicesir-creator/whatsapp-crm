@@ -56,6 +56,32 @@ vi.mock('./admin-client', () => ({
         }
         return chain
       }
+      if (table === 'meta_lead_logs') {
+        const chain = {
+          select: () => chain,
+          eq: () => chain,
+          order: () => chain,
+          limit: () => chain,
+          maybeSingle: () => Promise.resolve({ data: null, error: null }),
+        }
+        return chain
+      }
+      if (table === 'lead_assignment_rules') {
+        const chain = {
+          select: () => chain,
+          eq: () => chain,
+          order: () => Promise.resolve({ data: [], error: null }),
+        }
+        return chain
+      }
+      if (table === 'profiles') {
+        const chain = {
+          select: () => chain,
+          eq: () => chain,
+          maybeSingle: () => Promise.resolve({ data: null, error: null }),
+        }
+        return chain
+      }
       // conversations
       return {
         select: () => ({
