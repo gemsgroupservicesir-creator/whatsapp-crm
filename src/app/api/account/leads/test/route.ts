@@ -58,9 +58,9 @@ export async function POST(request: Request) {
     const college = body?.college?.trim() || 'Amity University';
     const course = body?.course?.trim() || 'B.Tech Computer Science';
     const city = body?.city?.trim() || 'New Delhi';
-    const formName = body?.formName?.trim() || 'Sample Meta Instant Form';
-    const campaignName = body?.campaignName?.trim() || 'Higher Education Admissions 2026';
-    const adName = body?.adName?.trim() || 'Direct Admissions Ad 2026';
+    const formName = body?.formName?.trim() || 'GEMS_MBA_NEPAL_2027_HIGH_INTENT';
+    const campaignName = body?.campaignName?.trim() || 'Mamata MBA';
+    const adName = body?.adName?.trim() || 'ad1';
 
     const result = await processIncomingLead(profile.account_id, {
       fullName,

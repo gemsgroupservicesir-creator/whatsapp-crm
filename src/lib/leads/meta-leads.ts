@@ -129,7 +129,21 @@ export async function fetchLeadFromMetaGraphApi(
     const campaignId = (data.campaign_id || data.campaign?.id || '').trim();
     const adName = (data.ad_name || data.ad?.name || '').trim();
     const adId = (data.ad_id || data.ad?.id || '').trim();
-    const formName = (data.form_name || '').trim();
+    let formName = (data.form_name || '').trim();
+
+    if (!formName && data.form_id) {
+      try {
+        const formRes = await fetch(
+          `https://graph.facebook.com/v21.0/${data.form_id}?fields=name&access_token=${encodeURIComponent(pageAccessToken)}`
+        );
+        if (formRes.ok) {
+          const formData = await formRes.json();
+          if (formData?.name) formName = String(formData.name).trim();
+        }
+      } catch {
+        // Ignore fallback form name fetch error
+      }
+    }
 
     return {
       leadgenId,

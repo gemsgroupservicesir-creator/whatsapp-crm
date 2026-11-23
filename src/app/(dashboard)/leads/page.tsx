@@ -425,9 +425,9 @@ export default function LeadsPage() {
           email: "aarav.sharma@example.com",
           college: "Amity University",
           course: "B.Tech Computer Science",
-          formName: "College Admissions 2026",
-          campaignName: "Higher Education Admissions 2026",
-          adName: "Direct Admissions Ad 2026",
+          formName: "GEMS_MBA_NEPAL_2027_HIGH_INTENT",
+          campaignName: "Mamata MBA",
+          adName: "ad1",
         }),
       });
       if (!res.ok) throw new Error("Simulation failed");
