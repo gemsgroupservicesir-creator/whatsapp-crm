@@ -335,7 +335,7 @@ export function AiConfig() {
                 />
                 {provider === 'gemini' && (
                   <p className="text-[11px] text-muted-foreground">
-                    Recommended: <code>gemini-3.8-flash</code> or <code>gemini-3.5-flash-lite</code>
+                    Recommended: <code>gemini-3.5-flash-lite</code> (High free quota) or <code>gemini-3.8-flash</code>
                   </p>
                 )}
               </div>

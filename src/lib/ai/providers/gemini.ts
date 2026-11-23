@@ -249,10 +249,10 @@ async function callOpenAiGemini(
 export async function generateGemini(args: ProviderArgs): Promise<ProviderResult> {
   const { apiKey, model, systemPrompt, messages, timeoutMs } = args
   const cleanKey = apiKey.trim().replace(/^["']|["']$/g, '')
-  let rawModel = model?.trim() || 'gemini-3.8-flash'
+  let rawModel = model?.trim() || 'gemini-3.5-flash-lite'
   // gemini-2.5-flash is no longer available to new users according to Google's API notice
   if (rawModel === 'gemini-2.5-flash' || rawModel === 'models/gemini-2.5-flash') {
-    rawModel = 'gemini-3.8-flash'
+    rawModel = 'gemini-3.5-flash-lite'
   }
   const activeModel = rawModel.replace(/^models\//, '')
 
@@ -274,18 +274,27 @@ export async function generateGemini(args: ProviderArgs): Promise<ProviderResult
       throw err
     }
 
-    // If model not found or restricted, try gemini-3.8-flash
-    if (
-      activeModel !== 'gemini-3.8-flash' &&
+    // If quota exceeded on gemini-3.8-flash (e.g. 20 requests/day free tier limit),
+    // or model not found, automatically fall back to gemini-3.5-flash-lite.
+    const isRateOrQuota =
+      err instanceof AiError &&
+      (err.code === 'rate_limited' ||
+        err.message.includes('Quota exceeded') ||
+        err.message.includes('limit: 20') ||
+        err.message.includes('free_tier_requests'))
+
+    const isModelMissing =
       err instanceof AiError &&
       (err.message.includes('not found') ||
         err.message.includes('not supported') ||
-        err.message.includes('no longer available'))
-    ) {
+        err.message.includes('no longer available') ||
+        err.message.includes('gemini-2.5-flash'))
+
+    if (activeModel !== 'gemini-3.5-flash-lite' && (isRateOrQuota || isModelMissing)) {
       try {
         return await callNativeGemini(
           cleanKey,
-          'gemini-3.8-flash',
+          'gemini-3.5-flash-lite',
           systemPrompt,
           messages,
           Math.min(timeoutMs, 15_000),
@@ -312,18 +321,24 @@ export async function generateGemini(args: ProviderArgs): Promise<ProviderResult
       throw openAiErr
     }
 
-    // If OpenAI also failed on model availability, try gemini-3.8-flash on OpenAI endpoint
-    if (
-      activeModel !== 'gemini-3.8-flash' &&
+    const isOpenAiRateOrQuota =
+      openAiErr instanceof AiError &&
+      (openAiErr.code === 'rate_limited' ||
+        openAiErr.message.includes('Quota exceeded') ||
+        openAiErr.message.includes('limit: 20') ||
+        openAiErr.message.includes('free_tier_requests'))
+
+    const isOpenAiModelMissing =
       openAiErr instanceof AiError &&
       (openAiErr.message.includes('no longer available') ||
         openAiErr.message.includes('not found') ||
         openAiErr.message.includes('gemini-2.5-flash'))
-    ) {
+
+    if (activeModel !== 'gemini-3.5-flash-lite' && (isOpenAiRateOrQuota || isOpenAiModelMissing)) {
       try {
         return await callOpenAiGemini(
           cleanKey,
-          'gemini-3.8-flash',
+          'gemini-3.5-flash-lite',
           systemPrompt,
           messages,
           timeoutMs,
