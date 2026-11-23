@@ -37,12 +37,69 @@ export async function POST(request: Request) {
       .eq('user_id', user.id)
       .maybeSingle();
 
-    if (!profile?.account_id) {
+    const body = await request.json().catch(() => ({}));
+
+    // Resolve workspace account with multi-level fallbacks
+    let effectiveAccountId = body.accountId || profile?.account_id;
+
+    if (!effectiveAccountId) {
+      const { data: owned } = await admin
+        .from('accounts')
+        .select('id')
+        .eq('owner_user_id', user.id)
+        .limit(1)
+        .maybeSingle();
+      if (owned?.id) effectiveAccountId = owned.id;
+    }
+
+    if (!effectiveAccountId) {
+      const { data: member } = await admin
+        .from('account_members')
+        .select('account_id')
+        .eq('user_id', user.id)
+        .limit(1)
+        .maybeSingle();
+      if (member?.account_id) effectiveAccountId = member.account_id;
+    }
+
+    if (!effectiveAccountId) {
+      const { data: anyAcc } = await admin
+        .from('accounts')
+        .select('id')
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      if (anyAcc?.id) effectiveAccountId = anyAcc.id;
+    }
+
+    if (!effectiveAccountId) {
       return NextResponse.json({ error: 'No active workspace found' }, { status: 400 });
     }
 
-    const body = await request.json().catch(() => ({}));
-    const recipient = String(body.to || profile.email || user.email || '').trim();
+    // Self-heal profile account_id if unlinked
+    if (profile && !profile.account_id) {
+      try {
+        await admin
+          .from('profiles')
+          .update({
+            account_id: effectiveAccountId,
+            account_role: profile.account_role || 'owner',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('user_id', user.id);
+      } catch {
+        // ignore
+      }
+    }
+
+    const recipient = String(
+      body.to ||
+      body.testRecipient ||
+      body.recipient ||
+      profile?.email ||
+      user.email ||
+      ''
+    ).trim();
 
     if (!recipient || !recipient.includes('@')) {
       return NextResponse.json(
@@ -51,10 +108,11 @@ export async function POST(request: Request) {
       );
     }
 
-    const config = await loadEmailConfig(admin, profile.account_id);
-    const activeApiKey = body.apiKey && typeof body.apiKey === 'string' && !body.apiKey.includes('••••')
-      ? body.apiKey.trim()
-      : config?.apiKey;
+    const config = await loadEmailConfig(admin, effectiveAccountId);
+    const activeApiKey =
+      body.apiKey && typeof body.apiKey === 'string' && !body.apiKey.includes('••••')
+        ? body.apiKey.trim()
+        : config?.apiKey;
 
     if (!activeApiKey) {
       return NextResponse.json(

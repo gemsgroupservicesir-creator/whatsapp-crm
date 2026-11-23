@@ -127,7 +127,12 @@ export function EmailSettingsPanel() {
       const res = await fetch('/api/email/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ testRecipient: testRecipient.trim() }),
+        body: JSON.stringify({
+          to: testRecipient.trim(),
+          testRecipient: testRecipient.trim(),
+          apiKey: apiKey.trim() || undefined,
+          fromEmail: fromEmail.trim() || undefined,
+        }),
       });
 
       const data = await res.json();

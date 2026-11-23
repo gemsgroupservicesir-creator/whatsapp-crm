@@ -597,13 +597,12 @@ export async function processIncomingLead(
         if (assignedTo) {
           const { data: counselorProfile } = await admin
             .from('profiles')
-            .select('full_name, phone, email')
+            .select('full_name, email')
             .eq('user_id', assignedTo)
             .maybeSingle();
 
           if (counselorProfile) {
             counselorName = counselorProfile.full_name || counselorName;
-            counselorPhone = counselorProfile.phone || counselorPhone;
             counselorEmail = counselorProfile.email || undefined;
           }
         }

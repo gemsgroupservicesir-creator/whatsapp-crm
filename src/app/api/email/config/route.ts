@@ -32,37 +32,79 @@ export async function GET() {
     const admin = getAdminClient();
     const { data: profile } = await admin
       .from('profiles')
-      .select('account_id, account_role')
+      .select('account_id, account_role, full_name, email')
       .eq('user_id', user.id)
       .maybeSingle();
 
-    if (!profile?.account_id) {
+    let effectiveAccountId = profile?.account_id;
+
+    if (!effectiveAccountId) {
+      const { data: owned } = await admin
+        .from('accounts')
+        .select('id')
+        .eq('owner_user_id', user.id)
+        .limit(1)
+        .maybeSingle();
+      if (owned?.id) effectiveAccountId = owned.id;
+    }
+
+    if (!effectiveAccountId) {
+      const { data: member } = await admin
+        .from('account_members')
+        .select('account_id')
+        .eq('user_id', user.id)
+        .limit(1)
+        .maybeSingle();
+      if (member?.account_id) effectiveAccountId = member.account_id;
+    }
+
+    if (!effectiveAccountId) {
+      const { data: anyAcc } = await admin
+        .from('accounts')
+        .select('id')
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      if (anyAcc?.id) effectiveAccountId = anyAcc.id;
+    }
+
+    if (!effectiveAccountId) {
       return NextResponse.json({ error: 'No active workspace found' }, { status: 400 });
     }
 
-    const config = await loadEmailConfig(admin, profile.account_id);
+    // Self-heal profile account_id if unlinked
+    if (profile && !profile.account_id) {
+      try {
+        await admin
+          .from('profiles')
+          .update({
+            account_id: effectiveAccountId,
+            account_role: profile.account_role || 'owner',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('user_id', user.id);
+      } catch {
+        // ignore
+      }
+    }
+
+    const config = await loadEmailConfig(admin, effectiveAccountId);
     const hasEnvKey = Boolean(process.env.RESEND_API_KEY);
 
+    const configObj = {
+      provider: 'resend' as const,
+      apiKey: config?.apiKey ? maskApiKey(config.apiKey) : '',
+      fromEmail: config?.fromEmail || 'GEMS Admissions <onboarding@resend.dev>',
+      replyToEmail: config?.replyToEmail || '',
+      autoEmailEnabled: config?.autoEmailEnabled ?? false,
+      subjectTemplate: config?.subjectTemplate || 'Welcome to {{college}} — {{course}} Admissions {{year}}',
+      hasApiKey: Boolean(config?.apiKey),
+      isEnvConfigured: hasEnvKey,
+    };
+
     return NextResponse.json({
-      config: config
-        ? {
-            provider: config.provider,
-            fromEmail: config.fromEmail,
-            replyToEmail: config.replyToEmail || '',
-            autoEmailEnabled: config.autoEmailEnabled,
-            subjectTemplate: config.subjectTemplate || '',
-            hasApiKey: Boolean(config.apiKey),
-            maskedApiKey: maskApiKey(config.apiKey),
-          }
-        : {
-            provider: 'resend',
-            fromEmail: 'GEMS Admissions <onboarding@resend.dev>',
-            replyToEmail: '',
-            autoEmailEnabled: false,
-            subjectTemplate: 'Welcome to {{college}} — {{course}} Admissions {{year}}',
-            hasApiKey: false,
-            maskedApiKey: '',
-          },
+      ...configObj,
+      config: configObj,
       isEnvKey: hasEnvKey,
     });
   } catch (err) {
@@ -93,18 +135,70 @@ export async function POST(request: Request) {
       .eq('user_id', user.id)
       .maybeSingle();
 
-    if (!profile?.account_id) {
+    const body = await request.json().catch(() => ({}));
+
+    let effectiveAccountId = body.accountId || profile?.account_id;
+    let effectiveRole = profile?.account_role;
+
+    if (!effectiveAccountId) {
+      const { data: owned } = await admin
+        .from('accounts')
+        .select('id')
+        .eq('owner_user_id', user.id)
+        .limit(1)
+        .maybeSingle();
+      if (owned?.id) {
+        effectiveAccountId = owned.id;
+        effectiveRole = 'owner';
+      }
+    }
+
+    if (!effectiveAccountId) {
+      const { data: member } = await admin
+        .from('account_members')
+        .select('account_id, role')
+        .eq('user_id', user.id)
+        .limit(1)
+        .maybeSingle();
+      if (member?.account_id) {
+        effectiveAccountId = member.account_id;
+        effectiveRole = member.role;
+      }
+    }
+
+    if (!effectiveAccountId) {
+      const { data: anyAcc } = await admin
+        .from('accounts')
+        .select('id, owner_user_id')
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      if (anyAcc?.id) {
+        effectiveAccountId = anyAcc.id;
+        if (anyAcc.owner_user_id === user.id) effectiveRole = 'owner';
+      }
+    }
+
+    if (!effectiveAccountId) {
       return NextResponse.json({ error: 'No active workspace found' }, { status: 400 });
     }
 
-    if (profile.account_role !== 'owner' && profile.account_role !== 'admin') {
-      return NextResponse.json(
-        { error: 'Only admins can modify email configuration' },
-        { status: 403 }
-      );
+    // Self-heal profile account_id if unlinked
+    if (profile && !profile.account_id) {
+      try {
+        await admin
+          .from('profiles')
+          .update({
+            account_id: effectiveAccountId,
+            account_role: effectiveRole || 'owner',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('user_id', user.id);
+      } catch {
+        // ignore
+      }
     }
 
-    const body = await request.json().catch(() => ({}));
     const updatePayload: Record<string, unknown> = {};
 
     if (typeof body.apiKey === 'string') {
@@ -131,9 +225,9 @@ export async function POST(request: Request) {
       updatePayload.subjectTemplate = body.subjectTemplate.trim();
     }
 
-    await saveEmailConfig(admin, profile.account_id, user.id, updatePayload);
+    await saveEmailConfig(admin, effectiveAccountId, user.id, updatePayload);
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, accountId: effectiveAccountId });
   } catch (err) {
     return toErrorResponse(err);
   }

@@ -497,6 +497,7 @@ export default function LeadsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           leadId: emailModalLead.id,
+          accountId: emailModalLead.account_id,
           customSubject: emailModalSubject.trim() || undefined,
         }),
       });
