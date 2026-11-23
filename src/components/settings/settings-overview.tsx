@@ -178,6 +178,11 @@ export function SettingsOverview({
       subtitle: 'Facebook & Instagram Lead Ads',
     },
     {
+      section: 'email',
+      loading: false,
+      subtitle: 'Resend Admissions Welcome Emails',
+    },
+    {
       section: 'members',
       loading: countsLoading,
       subtitle:

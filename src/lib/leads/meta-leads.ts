@@ -4,6 +4,9 @@ import { findOrCreateContact, resolveAuditUserId } from '@/lib/api/v1/contacts';
 import { resolveConversationByPhone } from '@/lib/whatsapp/resolve-conversation';
 import { sendMessageToConversation } from '@/lib/whatsapp/send-message';
 import { decrypt } from '@/lib/whatsapp/encryption';
+import { loadEmailConfig } from '@/lib/email/config';
+import { sendEmailWithResend, renderLeadWelcomeEmail } from '@/lib/email/resend';
+import { serializeLeadNotes, type LeadNote } from '@/lib/leads/notes';
 
 function getAdminClient() {
   return createClient(
@@ -36,6 +39,7 @@ export interface ProcessLeadResult {
   dealId?: string;
   assignedTo?: string;
   whatsappSent?: boolean;
+  emailSent?: boolean;
   error?: string;
 }
 
@@ -576,7 +580,99 @@ export async function processIncomingLead(
     }
   }
 
-  // 7. Log the lead with college, course, city, campaign, assignment info, and AI auto-chat status
+  // 6.5. Auto-send Admissions Welcome Email if lead has email and email config is active
+  let emailSent = false;
+  let emailDeliveryMeta: Record<string, unknown> | undefined;
+  const initialNotes: LeadNote[] = [];
+
+  if (lead.email && lead.email.includes('@')) {
+    try {
+      const emailConfig = await loadEmailConfig(admin, accountId);
+      if (emailConfig?.apiKey && emailConfig.autoEmailEnabled) {
+        // Resolve assigned counselor profile if available
+        let counselorName = 'Senior Admissions Counselor';
+        let counselorPhone = '+977 980-0000000';
+        let counselorEmail: string | undefined;
+
+        if (assignedTo) {
+          const { data: counselorProfile } = await admin
+            .from('profiles')
+            .select('full_name, phone, email')
+            .eq('user_id', assignedTo)
+            .maybeSingle();
+
+          if (counselorProfile) {
+            counselorName = counselorProfile.full_name || counselorName;
+            counselorPhone = counselorProfile.phone || counselorPhone;
+            counselorEmail = counselorProfile.email || undefined;
+          }
+        }
+
+        const renderedEmail = renderLeadWelcomeEmail(
+          {
+            fullName: lead.fullName,
+            email: lead.email,
+            phone: formattedPhone,
+            college: lead.college,
+            course: lead.course,
+            city: lead.city,
+            campaignName: lead.campaignName,
+            counselorName,
+            counselorPhone,
+            counselorEmail,
+          },
+          emailConfig.subjectTemplate
+        );
+
+        const sendResult = await sendEmailWithResend({
+          apiKey: emailConfig.apiKey,
+          from: emailConfig.fromEmail,
+          to: lead.email,
+          subject: renderedEmail.subject,
+          html: renderedEmail.html,
+          text: renderedEmail.text,
+          replyTo: emailConfig.replyToEmail || counselorEmail,
+        });
+
+        if (sendResult.success) {
+          emailSent = true;
+          emailDeliveryMeta = {
+            sent: true,
+            sent_at: new Date().toISOString(),
+            message_id: sendResult.id,
+            to: lead.email,
+            subject: renderedEmail.subject,
+          };
+          initialNotes.push({
+            id: crypto.randomUUID(),
+            text: `📧 Auto-welcome email sent to ${lead.email} (${renderedEmail.subject}).`,
+            author_name: 'Admissions AI Assistant',
+            author_type: 'ai_agent',
+            created_at: new Date().toISOString(),
+          });
+        } else {
+          console.warn('[MetaLeads] Auto-email dispatch failed:', sendResult.error);
+          emailDeliveryMeta = {
+            sent: false,
+            error: sendResult.error,
+            to: lead.email,
+            attempted_at: new Date().toISOString(),
+          };
+          initialNotes.push({
+            id: crypto.randomUUID(),
+            text: `⚠️ Auto-welcome email failed for ${lead.email}: ${sendResult.error}`,
+            author_name: 'Admissions AI Assistant',
+            author_type: 'system',
+            created_at: new Date().toISOString(),
+          });
+        }
+      }
+    } catch (emailErr) {
+      console.warn('[MetaLeads] Auto-email error:', emailErr);
+    }
+  }
+
+  // 7. Log the lead with college, course, city, campaign, assignment info, email status, and AI auto-chat status
   await admin.from('meta_lead_logs').insert({
     account_id: accountId,
     leadgen_id: lead.leadgenId || null,
@@ -590,7 +686,11 @@ export async function processIncomingLead(
     college: lead.college || null,
     course: lead.course || null,
     city: lead.city || null,
-    raw_data: lead.rawFields || {},
+    raw_data: {
+      ...(lead.rawFields || {}),
+      ...(emailDeliveryMeta ? { email_delivery: emailDeliveryMeta } : {}),
+    },
+    notes: initialNotes.length > 0 ? serializeLeadNotes(initialNotes) : null,
     status: 'processed',
     lead_status: 'new',
     contact_id: contactId,
@@ -630,6 +730,7 @@ export async function processIncomingLead(
     dealId,
     assignedTo,
     whatsappSent,
+    emailSent,
   };
 }
 

@@ -4,6 +4,7 @@ import {
   Inbox,
   KeyRound,
   LayoutGrid,
+  Mail,
   Palette,
   PlugZap,
   Share2,
@@ -31,6 +32,7 @@ export const SETTINGS_SECTIONS = [
   'appearance',
   'whatsapp',
   'leads',
+  'email',
   'templates',
   'quick-replies',
   'inbox',
@@ -61,6 +63,7 @@ export const SECTION_META: Record<SettingsSection, SectionMeta> = {
   appearance: { id: 'appearance', label: 'Appearance', icon: Palette, group: 'account' },
   whatsapp: { id: 'whatsapp', label: 'WhatsApp', icon: PlugZap, group: 'workspace', adminOnly: true },
   leads: { id: 'leads', label: 'Meta Instant Forms', icon: Share2, group: 'workspace', adminOnly: true },
+  email: { id: 'email', label: 'Email delivery (Resend)', icon: Mail, group: 'workspace', adminOnly: true },
   templates: { id: 'templates', label: 'Templates', icon: FileText, group: 'workspace' },
   'quick-replies': { id: 'quick-replies', label: 'Quick replies', icon: Zap, group: 'workspace' },
   inbox: { id: 'inbox', label: 'Inbox', icon: Inbox, group: 'workspace' },
@@ -89,6 +92,7 @@ function isSection(value: string | null): value is SettingsSection {
  */
 export function resolveSection(raw: string | null): SettingsSection {
   if (raw === 'tags' || raw === 'custom-fields') return 'fields';
+  if (raw === 'email' || raw === 'emails' || raw === 'resend') return 'email';
   if (isSection(raw)) return raw;
   return DEFAULT_SECTION;
 }

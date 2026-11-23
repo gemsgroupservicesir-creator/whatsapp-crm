@@ -166,6 +166,11 @@ export default function LeadsPage() {
   const [leadToDelete, setLeadToDelete] = useState<Lead | null>(null);
   const [deletingLead, setDeletingLead] = useState(false);
 
+  // Manual Send Email state
+  const [emailModalLead, setEmailModalLead] = useState<Lead | null>(null);
+  const [emailModalSubject, setEmailModalSubject] = useState("");
+  const [sendingEmail, setSendingEmail] = useState(false);
+
   // Assignment Rules state
   const [rules, setRules] = useState<AssignmentRule[]>([]);
   const [loadingRules, setLoadingRules] = useState(false);
@@ -474,6 +479,63 @@ export default function LeadsPage() {
     const text = `Student ${city} is inquiring for ${course} at ${inst}. Verify qualifying examination score (>60%), discuss scholarship eligibility percentage, and schedule a 1-on-1 counseling call.`;
     setNewNoteInput(text);
     setNoteAuthorType("ai_agent");
+  };
+
+  const handleOpenEmailModal = (lead: Lead) => {
+    setEmailModalLead(lead);
+    const course = lead.course || "Higher Education";
+    const college = lead.college || "GEMS Education";
+    setEmailModalSubject(`Welcome to ${college} — ${course} Admissions 2027/28`);
+  };
+
+  const handleSendLeadEmail = async () => {
+    if (!emailModalLead) return;
+    try {
+      setSendingEmail(true);
+      const res = await fetch("/api/email/send-lead", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          leadId: emailModalLead.id,
+          customSubject: emailModalSubject.trim() || undefined,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to dispatch email");
+      }
+
+      toast.success(data.message || `Welcome email sent to ${emailModalLead.email}!`);
+
+      // Update local lead state so notes and email delivery status reflect immediately
+      setLeads((prev) =>
+        prev.map((l) => {
+          if (l.id !== emailModalLead.id) return l;
+          const currentRaw = (l.raw_data && typeof l.raw_data === "object") ? l.raw_data : {};
+          return {
+            ...l,
+            raw_data: {
+              ...currentRaw,
+              email_delivery: {
+                sent: true,
+                sent_at: new Date().toISOString(),
+                message_id: data.id,
+                to: emailModalLead.email,
+                subject: emailModalSubject,
+              },
+            },
+          };
+        })
+      );
+
+      setEmailModalLead(null);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast.error(msg);
+    } finally {
+      setSendingEmail(false);
+    }
   };
 
   // Create Assignment Rule
@@ -1177,9 +1239,19 @@ export default function LeadsPage() {
                                     </span>
                                   )}
                                   {lead.email && (
-                                    <span className="flex items-center gap-1 truncate max-w-[150px]">
-                                      <Mail className="h-3 w-3 text-muted-foreground" />
-                                      {lead.email}
+                                    <span
+                                      className="flex items-center gap-1 truncate max-w-[170px]"
+                                      title={
+                                        Boolean((lead.raw_data as any)?.email_delivery?.sent)
+                                          ? `Admissions email delivered to ${lead.email}`
+                                          : lead.email
+                                      }
+                                    >
+                                      <Mail className="h-3 w-3 text-muted-foreground shrink-0" />
+                                      <span className="truncate">{lead.email}</span>
+                                      {Boolean((lead.raw_data as any)?.email_delivery?.sent) && (
+                                        <CheckCircle2 className="h-3 w-3 text-emerald-500 shrink-0" />
+                                      )}
                                     </span>
                                   )}
                                 </div>
@@ -1414,6 +1486,20 @@ export default function LeadsPage() {
                                   </span>
                                 </Button>
 
+                                {/* Send Email Button */}
+                                {lead.email && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => handleOpenEmailModal(lead)}
+                                    className="h-8 gap-1 text-xs px-2 cursor-pointer border-blue-500/20 hover:bg-blue-500/10 text-blue-700 dark:text-blue-300"
+                                    title={`Send Admissions Welcome Email to ${lead.email}`}
+                                  >
+                                    <Mail className="h-3.5 w-3.5 text-blue-600" />
+                                    <span className="hidden sm:inline">Email</span>
+                                  </Button>
+                                )}
+
                                 {/* Remarks & Questions */}
                                 <DropdownMenu>
                                   <DropdownMenuTrigger
@@ -1442,6 +1528,16 @@ export default function LeadsPage() {
                                       <Bot className="h-3.5 w-3.5 text-purple-600" />
                                       Counselor & AI Notes
                                     </DropdownMenuItem>
+
+                                    {lead.email && (
+                                      <DropdownMenuItem
+                                        onClick={() => handleOpenEmailModal(lead)}
+                                        className="text-xs gap-2 cursor-pointer text-blue-600 dark:text-blue-400 font-medium"
+                                      >
+                                        <Mail className="h-3.5 w-3.5" />
+                                        Send Admissions Email
+                                      </DropdownMenuItem>
+                                    )}
 
                                     {isAdminOrOwner && (
                                       <>
@@ -1551,21 +1647,39 @@ export default function LeadsPage() {
                 )}
               </div>
 
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  if (selectedLead) {
-                    setIsDetailsOpen(false);
-                    handleOpenNotes(selectedLead);
-                  }
-                }}
-                className="h-8 text-xs gap-1.5 border-purple-500/30 text-purple-600 dark:text-purple-400 hover:bg-purple-500/10 cursor-pointer"
-              >
-                <Bot className="h-3.5 w-3.5 text-purple-600" />
-                Counselor & AI Notes (
-                {selectedLead?.notes ? parseLeadNotes(selectedLead.notes).length : 0})
-              </Button>
+              <div className="flex items-center gap-2">
+                {selectedLead?.email && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      if (selectedLead) {
+                        handleOpenEmailModal(selectedLead);
+                      }
+                    }}
+                    className="h-8 text-xs gap-1.5 border-blue-500/30 text-blue-600 dark:text-blue-400 hover:bg-blue-500/10 cursor-pointer"
+                  >
+                    <Mail className="h-3.5 w-3.5 text-blue-600" />
+                    Send Email
+                  </Button>
+                )}
+
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    if (selectedLead) {
+                      setIsDetailsOpen(false);
+                      handleOpenNotes(selectedLead);
+                    }
+                  }}
+                  className="h-8 text-xs gap-1.5 border-purple-500/30 text-purple-600 dark:text-purple-400 hover:bg-purple-500/10 cursor-pointer"
+                >
+                  <Bot className="h-3.5 w-3.5 text-purple-600" />
+                  Counselor & AI Notes (
+                  {selectedLead?.notes ? parseLeadNotes(selectedLead.notes).length : 0})
+                </Button>
+              </div>
             </div>
 
             <div className="flex flex-col gap-2">
@@ -2040,6 +2154,76 @@ export default function LeadsPage() {
                 <>
                   <Trash2 className="h-4 w-4" />
                   Delete Lead
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Send Admissions Welcome Email Dialog */}
+      <Dialog open={Boolean(emailModalLead)} onOpenChange={(open) => !open && setEmailModalLead(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Mail className="h-5 w-5 text-blue-600" />
+              Send Admissions Welcome Email
+            </DialogTitle>
+            <DialogDescription>
+              Deliver a personalized admissions welcome email to{" "}
+              <strong className="text-foreground">{emailModalLead?.full_name}</strong>.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex flex-col gap-3 py-2 text-xs">
+            <div className="p-3 rounded-lg bg-blue-500/5 border border-blue-500/20 text-blue-900 dark:text-blue-200">
+              <div className="flex items-center gap-1.5 font-semibold text-blue-700 dark:text-blue-300">
+                <CheckCircle2 className="h-4 w-4" />
+                Verified Recipient Email:
+              </div>
+              <p className="mt-1 font-mono text-foreground font-semibold text-xs">
+                {emailModalLead?.email || "No email address found"}
+              </p>
+              <div className="mt-2 text-[11px] text-muted-foreground leading-relaxed">
+                Includes program details ({emailModalLead?.course || "Program"}), college info ({emailModalLead?.college || "Institution"}), and a direct WhatsApp chat button to the assigned counselor.
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="font-medium text-foreground">Email Subject Line</label>
+              <Input
+                value={emailModalSubject}
+                onChange={(e) => setEmailModalSubject(e.target.value)}
+                placeholder="Welcome to {{college}} — {{course}} Admissions"
+                className="h-9 text-xs"
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0 mt-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setEmailModalLead(null)}
+              disabled={sendingEmail}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleSendLeadEmail}
+              disabled={sendingEmail}
+              className="gap-1.5 bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
+            >
+              {sendingEmail ? (
+                <>
+                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                  Sending Email...
+                </>
+              ) : (
+                <>
+                  <Send className="h-3.5 w-3.5" />
+                  Send Welcome Email
                 </>
               )}
             </Button>
