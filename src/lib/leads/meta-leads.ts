@@ -924,3 +924,491 @@ export async function handleMetaLeadgenChange(
   });
 }
 
+export interface DetectedCampaign {
+  name: string;
+  source: 'meta_ads' | 'ctwa' | 'rules' | 'lead_logs';
+  forms: string[];
+  adNames: string[];
+  leadsCount: number;
+  status: 'ACTIVE' | 'PAUSED' | 'ARCHIVED' | 'DETECTED';
+  lastDetectedAt?: string;
+  formId?: string;
+  campaignId?: string;
+}
+
+/**
+ * Automatically discovers active & past campaigns from Meta Graph API forms,
+ * meta_lead_logs, lead_assignment_rules, and WhatsApp ad referrals.
+ */
+export async function detectWorkspaceCampaigns(
+  accountId: string
+): Promise<DetectedCampaign[]> {
+  const admin = getAdminClient();
+  const campaignMap = new Map<string, DetectedCampaign>();
+
+  const addOrUpdate = (name: string, partial: Partial<DetectedCampaign>) => {
+    const trimmed = (name || '').trim();
+    if (!trimmed) return;
+    const existing = campaignMap.get(trimmed) || {
+      name: trimmed,
+      source: partial.source || 'meta_ads',
+      forms: [],
+      adNames: [],
+      leadsCount: 0,
+      status: 'DETECTED',
+      lastDetectedAt: new Date().toISOString(),
+    };
+
+    if (partial.source) existing.source = partial.source;
+    if (partial.status) existing.status = partial.status;
+    if (partial.formId) existing.formId = partial.formId;
+    if (partial.campaignId) existing.campaignId = partial.campaignId;
+    if (partial.lastDetectedAt) existing.lastDetectedAt = partial.lastDetectedAt;
+    if (typeof partial.leadsCount === 'number') {
+      existing.leadsCount = Math.max(existing.leadsCount, partial.leadsCount);
+    }
+
+    if (partial.forms) {
+      for (const f of partial.forms) {
+        if (f && !existing.forms.includes(f)) existing.forms.push(f);
+      }
+    }
+    if (partial.adNames) {
+      for (const a of partial.adNames) {
+        if (a && !existing.adNames.includes(a)) existing.adNames.push(a);
+      }
+    }
+
+    campaignMap.set(trimmed, existing);
+  };
+
+  // 1. Fetch campaigns and forms from meta_lead_logs
+  try {
+    const { data: logs } = await admin
+      .from('meta_lead_logs')
+      .select('campaign_name, form_name, ad_name, created_at')
+      .eq('account_id', accountId);
+
+    if (logs) {
+      for (const log of logs) {
+        if (log.campaign_name) {
+          const existing = campaignMap.get(log.campaign_name);
+          const currentCount = (existing?.leadsCount || 0) + 1;
+          addOrUpdate(log.campaign_name, {
+            source: 'meta_ads',
+            forms: log.form_name ? [log.form_name] : [],
+            adNames: log.ad_name ? [log.ad_name] : [],
+            leadsCount: currentCount,
+            lastDetectedAt: log.created_at,
+          });
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[detectWorkspaceCampaigns] Error reading meta_lead_logs:', err);
+  }
+
+  // 2. Fetch campaign rules to include user-configured campaign names
+  try {
+    const { data: rules } = await admin
+      .from('lead_assignment_rules')
+      .select('match_value, criteria_type, name')
+      .eq('account_id', accountId)
+      .eq('criteria_type', 'campaign_name');
+
+    if (rules) {
+      for (const rule of rules) {
+        if (rule.match_value) {
+          addOrUpdate(rule.match_value, {
+            source: 'rules',
+            status: 'ACTIVE',
+          });
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[detectWorkspaceCampaigns] Error reading lead_assignment_rules:', err);
+  }
+
+  // 3. Connect to live Meta Graph API if config is present
+  try {
+    let pageAccessToken: string | null = null;
+    let pageId: string | null = null;
+
+    const { data: cfg } = await admin
+      .from('meta_lead_configs')
+      .select('page_id, page_access_token')
+      .eq('account_id', accountId)
+      .maybeSingle();
+
+    if (cfg?.page_access_token) {
+      pageAccessToken = cfg.page_access_token;
+      pageId = cfg.page_id || null;
+    } else {
+      const { data: waCfg } = await admin
+        .from('whatsapp_config')
+        .select('access_token')
+        .eq('account_id', accountId)
+        .maybeSingle();
+
+      if (waCfg?.access_token) {
+        try {
+          pageAccessToken = decrypt(waCfg.access_token);
+        } catch {}
+      }
+    }
+
+    if (pageAccessToken) {
+      // Step 3a. Resolve real Page Access Token if system token is provided
+      let effectivePageToken = pageAccessToken;
+      let effectivePageId = pageId;
+
+      try {
+        const accRes = await fetch(
+          `https://graph.facebook.com/v21.0/me/accounts?access_token=${encodeURIComponent(pageAccessToken)}`
+        );
+        if (accRes.ok) {
+          const accData = await accRes.json();
+          const firstAccount = accData?.data?.[0];
+          if (firstAccount?.access_token) {
+            effectivePageToken = firstAccount.access_token;
+            if (!effectivePageId && firstAccount.id) {
+              effectivePageId = firstAccount.id;
+            }
+          }
+        }
+      } catch {}
+
+      if (effectivePageId && effectivePageToken) {
+        // Step 3b. Fetch forms on page
+        const formsRes = await fetch(
+          `https://graph.facebook.com/v21.0/${effectivePageId}/leadgen_forms?fields=id,name,status,leads_count&access_token=${encodeURIComponent(effectivePageToken)}`
+        );
+        if (formsRes.ok) {
+          const formsData = await formsRes.json();
+          const forms = Array.isArray(formsData.data) ? formsData.data : [];
+
+          for (const form of forms) {
+            const formId = form.id;
+            const formName = form.name;
+            const formStatus = form.status === 'ACTIVE' ? 'ACTIVE' : 'PAUSED';
+
+            // Query sample leads to get live campaign name & ad details
+            try {
+              const leadsRes = await fetch(
+                `https://graph.facebook.com/v21.0/${formId}/leads?fields=campaign_name,campaign_id,ad_name,ad_id&limit=3&access_token=${encodeURIComponent(effectivePageToken)}`
+              );
+              if (leadsRes.ok) {
+                const leadsData = await leadsRes.json();
+                const sampleLeads = Array.isArray(leadsData.data) ? leadsData.data : [];
+
+                for (const lead of sampleLeads) {
+                  const campName = (lead.campaign_name || '').trim();
+                  if (campName) {
+                    addOrUpdate(campName, {
+                      source: 'meta_ads',
+                      status: formStatus,
+                      formId,
+                      campaignId: lead.campaign_id,
+                      forms: [formName],
+                      adNames: lead.ad_name ? [lead.ad_name] : [],
+                    });
+                  }
+                }
+              }
+            } catch {}
+          }
+        }
+      }
+    }
+  } catch (apiErr) {
+    console.warn('[detectWorkspaceCampaigns] Meta API discovery error:', apiErr);
+  }
+
+  return Array.from(campaignMap.values()).sort((a, b) => {
+    if (a.status === 'ACTIVE' && b.status !== 'ACTIVE') return -1;
+    if (b.status === 'ACTIVE' && a.status !== 'ACTIVE') return 1;
+    return b.leadsCount - a.leadsCount || a.name.localeCompare(b.name);
+  });
+}
+
+/**
+ * Synchronizes all leads directly from Meta Instant Forms via Graph API.
+ * Guarantees zero dropped leads if webhooks were missed.
+ */
+export async function syncMetaFormLeads(
+  accountId: string,
+  targetFormId?: string
+): Promise<{ success: boolean; syncedCount: number; skippedCount: number; totalFound: number; error?: string }> {
+  const admin = getAdminClient();
+  let syncedCount = 0;
+  let skippedCount = 0;
+  let totalFound = 0;
+
+  try {
+    const { data: cfg } = await admin
+      .from('meta_lead_configs')
+      .select('page_id, page_access_token')
+      .eq('account_id', accountId)
+      .maybeSingle();
+
+    if (!cfg?.page_access_token) {
+      return {
+        success: false,
+        syncedCount: 0,
+        skippedCount: 0,
+        totalFound: 0,
+        error: 'No Meta Page access token configured.',
+      };
+    }
+
+    let effectivePageToken = cfg.page_access_token;
+    let effectivePageId = cfg.page_id;
+
+    try {
+      const accRes = await fetch(
+        `https://graph.facebook.com/v21.0/me/accounts?access_token=${encodeURIComponent(cfg.page_access_token)}`
+      );
+      if (accRes.ok) {
+        const accData = await accRes.json();
+        const firstAccount = accData?.data?.[0];
+        if (firstAccount?.access_token) {
+          effectivePageToken = firstAccount.access_token;
+          if (!effectivePageId && firstAccount.id) effectivePageId = firstAccount.id;
+        }
+      }
+    } catch {}
+
+    if (!effectivePageId) {
+      return {
+        success: false,
+        syncedCount: 0,
+        skippedCount: 0,
+        totalFound: 0,
+        error: 'Meta Page ID could not be resolved.',
+      };
+    }
+
+    // List forms
+    let formsToSync: Array<{ id: string; name: string }> = [];
+    if (targetFormId) {
+      formsToSync = [{ id: targetFormId, name: 'Target Form' }];
+    } else {
+      const formsRes = await fetch(
+        `https://graph.facebook.com/v21.0/${effectivePageId}/leadgen_forms?fields=id,name,status&access_token=${encodeURIComponent(effectivePageToken)}`
+      );
+      if (formsRes.ok) {
+        const formsData = await formsRes.json();
+        formsToSync = (formsData.data || []).map((f: { id: string; name: string }) => ({
+          id: f.id,
+          name: f.name,
+        }));
+      }
+    }
+
+    // Fetch existing leadgen_ids in meta_lead_logs to avoid duplicate processing
+    const { data: existingLogs } = await admin
+      .from('meta_lead_logs')
+      .select('leadgen_id')
+      .eq('account_id', accountId);
+
+    const existingIds = new Set((existingLogs || []).map((l) => l.leadgen_id).filter(Boolean));
+    const fields = 'id,created_time,field_data,form_id,campaign_id,campaign_name,ad_id,ad_name,adset_id,adset_name';
+
+    for (const form of formsToSync) {
+      const leadsRes = await fetch(
+        `https://graph.facebook.com/v21.0/${form.id}/leads?fields=${fields}&limit=50&access_token=${encodeURIComponent(effectivePageToken)}`
+      );
+      if (!leadsRes.ok) continue;
+
+      const leadsData = await leadsRes.json();
+      const rawLeads = Array.isArray(leadsData.data) ? leadsData.data : [];
+      totalFound += rawLeads.length;
+
+      for (const lead of rawLeads) {
+        if (existingIds.has(lead.id)) {
+          skippedCount++;
+          continue;
+        }
+
+        const parsedLead = await fetchLeadFromMetaGraphApi(lead.id, effectivePageToken);
+        if (parsedLead && parsedLead.phone) {
+          if (!parsedLead.formName) parsedLead.formName = form.name;
+          const result = await processIncomingLead(accountId, parsedLead);
+          if (result.success) {
+            syncedCount++;
+            existingIds.add(lead.id);
+          }
+        }
+      }
+    }
+
+    return {
+      success: true,
+      syncedCount,
+      skippedCount,
+      totalFound,
+    };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[syncMetaFormLeads] error:', err);
+    return { success: false, syncedCount, skippedCount, totalFound, error: msg };
+  }
+}
+
+export interface WhatsAppAdReferralData {
+  sourceUrl?: string;
+  sourceId?: string;
+  sourceType?: string;
+  headline?: string;
+  body?: string;
+  ctwaClid?: string;
+}
+
+/**
+ * Handles Click-to-WhatsApp (CTWA) ad referrals and ad campaign tags in inbound messages.
+ * Automatically links the campaign to meta_lead_logs and applies auto-assignment rules.
+ */
+export async function handleWhatsAppAdReferral(
+  admin: SupabaseClient,
+  accountId: string,
+  options: {
+    contactId: string;
+    conversationId: string;
+    phone: string;
+    fullName: string;
+    referral?: WhatsAppAdReferralData;
+    messageText?: string;
+  }
+): Promise<{
+  isAdLead: boolean;
+  campaignName?: string;
+  assignedTo?: string;
+  ruleMatched?: boolean;
+}> {
+  try {
+    let campaignName: string | undefined;
+    let adName: string | undefined;
+
+    // 1. Check referral object from Click-to-WhatsApp (CTWA) ads
+    if (options.referral) {
+      campaignName = (options.referral.headline || '').trim();
+      adName = (options.referral.body || options.referral.headline || '').trim();
+    }
+
+    // 2. Check for UTM tags or explicit ad keywords in message text if campaignName still empty
+    const text = options.messageText || '';
+    if (!campaignName && text) {
+      const utmMatch = text.match(/(?:utm_campaign|campaign|ad_campaign)[=:]\s*([a-zA-Z0-9_\-]+)/i);
+      if (utmMatch && utmMatch[1]) {
+        campaignName = utmMatch[1].trim();
+      } else {
+        // Check if message text mentions any active rule campaign
+        const { data: activeRules } = await admin
+          .from('lead_assignment_rules')
+          .select('match_value')
+          .eq('account_id', accountId)
+          .eq('criteria_type', 'campaign_name')
+          .eq('is_active', true);
+
+        if (activeRules) {
+          const lowerText = text.toLowerCase();
+          for (const rule of activeRules) {
+            if (rule.match_value && lowerText.includes(rule.match_value.toLowerCase())) {
+              campaignName = rule.match_value;
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    if (!campaignName && !options.referral) {
+      return { isAdLead: false };
+    }
+
+    const detectedCampaign = campaignName || 'Click-to-WhatsApp Ad';
+
+    // 3. Find matching assignment rule
+    const matchedRule = await findMatchingLeadAssignmentRule(admin, accountId, {
+      campaignName: detectedCampaign,
+      formName: 'Click-to-WhatsApp Ad',
+    });
+
+    const assignedTo = matchedRule?.assign_to_user_id || undefined;
+
+    // 4. Update conversation assignment if matched
+    if (assignedTo && options.conversationId) {
+      await admin
+        .from('conversations')
+        .update({
+          assigned_agent_id: assignedTo,
+          ai_autoreply_disabled: false,
+        })
+        .eq('id', options.conversationId);
+    }
+
+    // 5. Upsert lead in meta_lead_logs
+    const { data: existingLead } = await admin
+      .from('meta_lead_logs')
+      .select('id, assigned_to')
+      .eq('account_id', accountId)
+      .eq('contact_id', options.contactId)
+      .maybeSingle();
+
+    if (existingLead) {
+      await admin
+        .from('meta_lead_logs')
+        .update({
+          campaign_name: detectedCampaign,
+          ad_name: adName || null,
+          assigned_to: assignedTo || existingLead.assigned_to,
+          assigned_at: assignedTo ? new Date().toISOString() : undefined,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existingLead.id);
+    } else {
+      await admin.from('meta_lead_logs').insert({
+        account_id: accountId,
+        form_name: 'Click-to-WhatsApp Ad',
+        campaign_name: detectedCampaign,
+        ad_name: adName || null,
+        full_name: options.fullName || 'WhatsApp Ad Lead',
+        phone: options.phone,
+        status: 'processed',
+        lead_status: 'new',
+        contact_id: options.contactId,
+        conversation_id: options.conversationId,
+        assigned_to: assignedTo || null,
+        assigned_at: assignedTo ? new Date().toISOString() : null,
+        whatsapp_sent: false,
+        ai_chat_enabled: matchedRule ? matchedRule.ai_auto_chat_enabled : true,
+        raw_data: {
+          referral: options.referral || null,
+          source: 'ctwa',
+        },
+      });
+    }
+
+    // 6. Sync to pipeline deal
+    await syncLeadToPipelineDeal(admin, accountId, {
+      contactId: options.contactId,
+      conversationId: options.conversationId,
+      fullName: options.fullName,
+      phone: options.phone,
+      formName: 'Click-to-WhatsApp Ad',
+      assignedUserId: assignedTo,
+    });
+
+    return {
+      isAdLead: true,
+      campaignName: detectedCampaign,
+      assignedTo,
+      ruleMatched: Boolean(matchedRule),
+    };
+  } catch (err) {
+    console.error('[handleWhatsAppAdReferral] Error:', err);
+    return { isAdLead: false };
+  }
+}
+

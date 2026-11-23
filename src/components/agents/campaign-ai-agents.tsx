@@ -89,6 +89,8 @@ export function CampaignAiAgents() {
   const [newAiChatEnabled, setNewAiChatEnabled] = useState(true);
   const [newAiPrompt, setNewAiPrompt] = useState("");
   const [creating, setCreating] = useState(false);
+  const [detectedCampaigns, setDetectedCampaigns] = useState<Array<{ name: string; leadsCount: number; source: string }>>([]);
+  const [detectingCampaigns, setDetectingCampaigns] = useState(false);
 
   // Edit Prompt State
   const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
@@ -110,9 +112,10 @@ export function CampaignAiAgents() {
   const fetchCampaignData = useCallback(async () => {
     try {
       setLoading(true);
-      const [rulesRes, agentsRes] = await Promise.all([
+      const [rulesRes, agentsRes, campRes] = await Promise.all([
         fetch("/api/leads/rules"),
         fetch("/api/account/users"),
+        fetch("/api/leads/campaigns/detect"),
       ]);
 
       if (rulesRes.ok) {
@@ -122,6 +125,10 @@ export function CampaignAiAgents() {
       if (agentsRes.ok) {
         const data = await agentsRes.json();
         setAgents(data.users || []);
+      }
+      if (campRes.ok) {
+        const data = await campRes.json();
+        setDetectedCampaigns(data.campaigns || []);
       }
     } catch (err) {
       console.error("Error fetching campaign agent data:", err);
@@ -621,15 +628,94 @@ export function CampaignAiAgents() {
               </div>
 
               <div className="flex flex-col gap-1">
-                <label className="text-xs font-medium">Match Keyword</label>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-medium">Match Keyword</label>
+                  {newCriteriaType === "campaign_name" && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          setDetectingCampaigns(true);
+                          const res = await fetch("/api/leads/campaigns/detect");
+                          if (res.ok) {
+                            const data = await res.json();
+                            setDetectedCampaigns(data.campaigns || []);
+                            toast.success(`Discovered ${data.campaigns?.length || 0} campaigns from Meta Ads!`);
+                          }
+                        } catch {
+                          toast.error("Failed to detect campaigns");
+                        } finally {
+                          setDetectingCampaigns(false);
+                        }
+                      }}
+                      disabled={detectingCampaigns}
+                      className="text-[10px] text-purple-600 dark:text-purple-400 hover:underline flex items-center gap-0.5 cursor-pointer"
+                    >
+                      <RefreshCw className={cn("h-2.5 w-2.5", detectingCampaigns && "animate-spin")} />
+                      Detect Ads
+                    </button>
+                  )}
+                </div>
                 <Input
-                  placeholder="e.g. Mamata MBA"
+                  placeholder={newCriteriaType === "campaign_name" ? "e.g. GEMS_NIT_Admissions_2027_28" : "e.g. Mamata MBA"}
                   value={newMatchValue}
                   onChange={(e) => setNewMatchValue(e.target.value)}
+                  list={newCriteriaType === "campaign_name" ? "campaign-agent-datalist" : undefined}
                   className="h-9 text-xs"
                 />
+                {newCriteriaType === "campaign_name" && (
+                  <datalist id="campaign-agent-datalist">
+                    {detectedCampaigns.map((c) => (
+                      <option key={c.name} value={c.name} />
+                    ))}
+                  </datalist>
+                )}
               </div>
             </div>
+
+            {/* Detected Campaigns quick pick pills */}
+            {newCriteriaType === "campaign_name" && detectedCampaigns.length > 0 && (
+              <div className="flex flex-col gap-1 p-2 rounded-lg bg-purple-500/5 border border-purple-500/20">
+                <span className="text-[10px] font-semibold text-purple-700 dark:text-purple-300 uppercase tracking-wider flex items-center gap-1">
+                  <Sparkles className="h-3 w-3 text-purple-600" />
+                  Auto-Detected Campaigns from Meta:
+                </span>
+                <div className="flex flex-wrap gap-1 mt-0.5">
+                  {detectedCampaigns.map((c) => (
+                    <button
+                      key={c.name}
+                      type="button"
+                      onClick={() => {
+                        setNewMatchValue(c.name);
+                        if (!newRuleName || newRuleName.includes("Agent") || newRuleName.includes("Campaign")) {
+                          setNewRuleName(`${c.name} Agent`);
+                        }
+                      }}
+                      className={cn(
+                        "px-2 py-0.5 rounded text-[11px] font-medium border transition-colors flex items-center gap-1 cursor-pointer",
+                        newMatchValue === c.name
+                          ? "bg-purple-600 text-white border-purple-600 shadow-2xs"
+                          : "bg-background text-foreground border-border hover:border-purple-400"
+                      )}
+                      title={`${c.name} (${c.leadsCount} leads recorded)`}
+                    >
+                      <Megaphone className="h-2.5 w-2.5" />
+                      <span className="truncate max-w-[150px]">{c.name}</span>
+                      {c.leadsCount > 0 && (
+                        <span
+                          className={cn(
+                            "text-[9px] px-1 rounded-full",
+                            newMatchValue === c.name ? "bg-white/20 text-white" : "bg-muted text-muted-foreground"
+                          )}
+                        >
+                          {c.leadsCount}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="flex flex-col gap-1">
               <label className="text-xs font-medium">Assigned Senior Counselor</label>

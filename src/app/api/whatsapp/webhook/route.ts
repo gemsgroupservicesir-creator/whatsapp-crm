@@ -36,7 +36,10 @@ import {
   applyMessageStatus,
   applyPendingMessageStatuses,
 } from '@/lib/whatsapp/message-status-sync'
-import { handleMetaLeadgenChange } from '@/lib/leads/meta-leads'
+import {
+  handleMetaLeadgenChange,
+  handleWhatsAppAdReferral,
+} from '@/lib/leads/meta-leads'
 
 // The `after()` callback in POST runs within this route's max duration.
 // Inbound processing can fan out to per-media Meta verification calls, so
@@ -103,6 +106,22 @@ interface WhatsAppMessage {
   button?: { text?: string; payload?: string }
   /** Present when the customer swipe-replies to one of our messages. */
   context?: { id: string }
+  /**
+   * Click-to-WhatsApp (CTWA) ad referral data.
+   * Attached when the customer messages by tapping an ad on Facebook or Instagram.
+   */
+  referral?: {
+    source_url?: string
+    source_id?: string
+    source_type?: 'ad' | 'post'
+    headline?: string
+    body?: string
+    media_type?: string
+    image_url?: string
+    video_url?: string
+    thumbnail_url?: string
+    ctwa_clid?: string
+  }
   /**
    * Why Meta could not hand this message over. Set on a `type:
    * 'unsupported'` delivery — a view-once photo, a poll, a disappearing
@@ -909,6 +928,27 @@ async function processMessage(
   // so the broadcast's `replied_count` advances (via the aggregate
   // trigger installed in migration 003).
   await flagBroadcastReplyIfAny(accountId, contactRecord.id)
+
+  // Auto-detect campaigns from Meta Click-to-WhatsApp (CTWA) ads or inbound ad tags
+  if (message.referral || contentText || message.text?.body) {
+    await handleWhatsAppAdReferral(supabaseAdmin(), accountId, {
+      contactId: contactRecord.id,
+      conversationId: conversation.id,
+      phone: contactRecord.phone,
+      fullName: contactRecord.name || 'WhatsApp Contact',
+      referral: message.referral
+        ? {
+            sourceUrl: message.referral.source_url,
+            sourceId: message.referral.source_id,
+            sourceType: message.referral.source_type,
+            headline: message.referral.headline,
+            body: message.referral.body,
+            ctwaClid: message.referral.ctwa_clid,
+          }
+        : undefined,
+      messageText: contentText ?? message.text?.body ?? '',
+    }).catch((err) => console.warn('[webhook] handleWhatsAppAdReferral failed:', err))
+  }
 
   // ============================================================
   // Flow runner dispatch.

@@ -13,6 +13,12 @@ import {
 } from '@/lib/flows/meta-send'
 import { sendTypingIndicator } from '@/lib/whatsapp/meta-api'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
+import {
+  parseLeadNotes,
+  serializeLeadNotes,
+  formatNotesForAiContext,
+  type LeadNote,
+} from '@/lib/leads/notes'
 
 interface DispatchArgs {
   /** Tenancy key — drives config, contact, and whatsapp_config lookups. */
@@ -67,7 +73,7 @@ export async function dispatchInboundToAiReply(
     // Check if this conversation belongs to a Meta campaign lead
     const { data: leadLog } = await db
       .from('meta_lead_logs')
-      .select('id, full_name, college, course, city, campaign_name, form_name, assigned_to, ai_chat_enabled')
+      .select('id, full_name, college, course, city, campaign_name, form_name, assigned_to, ai_chat_enabled, notes')
       .eq('conversation_id', conversationId)
       .order('created_at', { ascending: false })
       .limit(1)
@@ -195,6 +201,12 @@ export async function dispatchInboundToAiReply(
       if (leadLog.campaign_name) parts.push(`- Marketing Campaign: ${leadLog.campaign_name}`)
       if (counselorName) parts.push(`- Dedicated Admission Counselor: ${counselorName}`)
 
+      // Include all counselor and AI notes in the context so the AI gives accurate follow-ups!
+      const notesContext = formatNotesForAiContext(leadLog.notes)
+      if (notesContext) {
+        parts.push(notesContext)
+      }
+
       if (campaignPrompt) {
         parts.push(`\nCAMPAIGN ADMISSION GUIDELINES:\n${campaignPrompt}`)
       } else {
@@ -298,6 +310,26 @@ export async function dispatchInboundToAiReply(
       text,
       aiGenerated: true,
     })
+
+    // Record AI auto-reply into lead notes so counselors and future AI turns have full knowledge
+    if (leadLog?.id && text) {
+      try {
+        const existingNotes = parseLeadNotes(leadLog.notes)
+        const aiNote: LeadNote = {
+          id: crypto.randomUUID(),
+          text: `[WhatsApp Auto Follow-Up]: ${text.slice(0, 300)}${text.length > 300 ? '...' : ''}`,
+          author_name: 'AI Admissions Agent',
+          author_type: 'ai_agent',
+          created_at: new Date().toISOString(),
+        }
+        await db
+          .from('meta_lead_logs')
+          .update({ notes: serializeLeadNotes([...existingNotes, aiNote]) })
+          .eq('id', leadLog.id)
+      } catch (noteErr) {
+        console.warn('[ai auto-reply] Failed to record AI note in meta_lead_logs:', noteErr)
+      }
+    }
   } catch (err) {
     console.error('[ai auto-reply] dispatch failed:', err)
   }

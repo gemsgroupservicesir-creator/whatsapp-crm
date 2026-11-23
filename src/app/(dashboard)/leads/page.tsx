@@ -27,10 +27,14 @@ import {
   CheckCircle2,
   AlertCircle,
   Settings,
-  Share2,
   Megaphone,
   Send,
+  ChevronDown,
+  Bot,
+  Check,
+  Share2,
 } from "lucide-react";
+import { parseLeadNotes, type LeadNote } from "@/lib/leads/notes";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -153,8 +157,10 @@ export default function LeadsPage() {
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   const [isNotesOpen, setIsNotesOpen] = useState(false);
-  const [noteText, setNoteText] = useState("");
-  const [savingNotes, setSavingNotes] = useState(false);
+  const [currentNotesList, setCurrentNotesList] = useState<LeadNote[]>([]);
+  const [newNoteInput, setNewNoteInput] = useState("");
+  const [noteAuthorType, setNoteAuthorType] = useState<"counselor" | "ai_agent">("counselor");
+  const [addingNote, setAddingNote] = useState(false);
 
   // Delete lead state
   const [leadToDelete, setLeadToDelete] = useState<Lead | null>(null);
@@ -176,8 +182,63 @@ export default function LeadsPage() {
   const [ruleAiCampaignPrompt, setRuleAiCampaignPrompt] = useState("");
   const [savingRule, setSavingRule] = useState(false);
 
+  // Auto-detected campaigns from Meta Ads, CTWA, and logs
+  const [detectedCampaigns, setDetectedCampaigns] = useState<Array<{
+    name: string;
+    source: string;
+    status: string;
+    leadsCount: number;
+    forms?: string[];
+    adNames?: string[];
+  }>>([]);
+  const [detectingCampaigns, setDetectingCampaigns] = useState(false);
+  const [syncingMetaLeads, setSyncingMetaLeads] = useState(false);
+
   // Test Simulator state
   const [simulating, setSimulating] = useState(false);
+
+  const fetchDetectedCampaigns = useCallback(async (showToast = false) => {
+    try {
+      setDetectingCampaigns(true);
+      const res = await fetch("/api/leads/campaigns/detect");
+      if (!res.ok) throw new Error("Failed to detect campaigns");
+      const data = await res.json();
+      if (data.campaigns) {
+        setDetectedCampaigns(data.campaigns);
+        setCampaigns((prev) => {
+          const names = data.campaigns.map((c: { name: string }) => c.name);
+          return Array.from(new Set([...prev, ...names])).sort();
+        });
+        if (showToast) {
+          toast.success(`Discovered ${data.campaigns.length} campaigns from Meta Ads & logs!`);
+        }
+      }
+    } catch (err) {
+      console.warn("Error detecting campaigns:", err);
+      if (showToast) toast.error("Could not detect campaigns from Meta");
+    } finally {
+      setDetectingCampaigns(false);
+    }
+  }, []);
+
+  const handleSyncMetaLeads = async () => {
+    try {
+      setSyncingMetaLeads(true);
+      const res = await fetch("/api/leads/meta/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to sync Meta leads");
+      toast.success(data.message || "Meta leads synced successfully!");
+      fetchLeads();
+      fetchDetectedCampaigns();
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to sync Meta leads");
+    } finally {
+      setSyncingMetaLeads(false);
+    }
+  };
 
   const handleApplyRules = async () => {
     try {
@@ -253,6 +314,10 @@ export default function LeadsPage() {
       setLoadingRules(false);
     }
   };
+
+  useEffect(() => {
+    fetchDetectedCampaigns();
+  }, [fetchDetectedCampaigns]);
 
   useEffect(() => {
     if (activeTab === "rules") {
@@ -350,27 +415,65 @@ export default function LeadsPage() {
     }
   };
 
-  // Save notes
-  const handleSaveNotes = async () => {
-    if (!selectedLead) return;
+  // Open Notes Dialog for a lead
+  const handleOpenNotes = (lead: Lead) => {
+    setSelectedLead(lead);
+    setCurrentNotesList(parseLeadNotes(lead.notes));
+    setNewNoteInput("");
+    setNoteAuthorType("counselor");
+    setIsNotesOpen(true);
+  };
+
+  // Add multiple notes (Counselor Note or AI Agent Note)
+  const handleAddNote = async () => {
+    if (!selectedLead || !newNoteInput.trim()) return;
     try {
-      setSavingNotes(true);
+      setAddingNote(true);
       const res = await fetch("/api/leads", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: selectedLead.id, notes: noteText }),
+        body: JSON.stringify({
+          id: selectedLead.id,
+          new_note: {
+            text: newNoteInput.trim(),
+            author_type: noteAuthorType,
+            author_name: noteAuthorType === "ai_agent" ? "AI Admissions Agent" : "Counselor",
+          },
+        }),
       });
-      if (!res.ok) throw new Error("Failed to save remarks");
-      toast.success("Remarks saved successfully");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to add note");
+
+      const updatedNotes = data.parsed_notes || parseLeadNotes(data.lead?.notes);
+      setCurrentNotesList(updatedNotes);
       setLeads((prev) =>
-        prev.map((l) => (l.id === selectedLead.id ? { ...l, notes: noteText } : l))
+        prev.map((l) => (l.id === selectedLead.id ? { ...l, notes: data.lead?.notes || l.notes } : l))
       );
-      setIsNotesOpen(false);
-    } catch {
-      toast.error("Failed to save remarks");
+      if (selectedLead) {
+        setSelectedLead((prev) => (prev ? { ...prev, notes: data.lead?.notes || prev.notes } : null));
+      }
+      setNewNoteInput("");
+      toast.success(
+        noteAuthorType === "ai_agent"
+          ? "AI Agent note added! AI will use this in WhatsApp follow-ups."
+          : "Counselor note recorded! AI agent briefed."
+      );
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to add note");
     } finally {
-      setSavingNotes(false);
+      setAddingNote(false);
     }
+  };
+
+  // Pre-fill AI insight note based on student lead details
+  const handleAiSuggestNote = () => {
+    if (!selectedLead) return;
+    const course = selectedLead.course ? selectedLead.course : "Academic Programs";
+    const inst = selectedLead.college ? selectedLead.college : "Partner Institutions";
+    const city = selectedLead.city ? `from ${selectedLead.city}` : "";
+    const text = `Student ${city} is inquiring for ${course} at ${inst}. Verify qualifying examination score (>60%), discuss scholarship eligibility percentage, and schedule a 1-on-1 counseling call.`;
+    setNewNoteInput(text);
+    setNoteAuthorType("ai_agent");
   };
 
   // Create Assignment Rule
@@ -1151,31 +1254,41 @@ export default function LeadsPage() {
                               </div>
                             </TableCell>
 
-                            {/* Status Selector */}
+                            {/* Status Selector Dropdown */}
                             <TableCell>
                               <DropdownMenu>
                                 <DropdownMenuTrigger
                                   className={cn(
-                                    "inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors cursor-pointer",
+                                    "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border transition-all hover:scale-105 hover:shadow-xs cursor-pointer",
                                     statusObj.bg,
                                     statusObj.text,
                                     statusObj.border
                                   )}
+                                  title="Click to change lead status"
                                 >
-                                  <span className="h-1.5 w-1.5 rounded-full bg-current" />
-                                  {statusObj.label}
+                                  <span className="h-2 w-2 rounded-full bg-current shrink-0" />
+                                  <span>{statusObj.label}</span>
+                                  <ChevronDown className="h-3 w-3 opacity-60 ml-0.5 shrink-0" />
                                 </DropdownMenuTrigger>
-                                <DropdownMenuContent align="start" className="w-44">
-                                  <DropdownMenuLabel className="text-xs">Update Status</DropdownMenuLabel>
+                                <DropdownMenuContent align="start" className="w-48">
+                                  <DropdownMenuLabel className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                                    Change Lead Status
+                                  </DropdownMenuLabel>
                                   <DropdownMenuSeparator />
                                   {Object.entries(STATUS_CONFIG).map(([key, cfg]) => (
                                     <DropdownMenuItem
                                       key={key}
                                       onClick={() => handleStatusChange(lead.id, key)}
-                                      className="text-xs flex items-center justify-between"
+                                      className={cn(
+                                        "text-xs flex items-center justify-between cursor-pointer py-1.5",
+                                        lead.lead_status === key && "font-semibold bg-accent"
+                                      )}
                                     >
-                                      <span>{cfg.label}</span>
-                                      {lead.lead_status === key && <CheckCircle2 className="h-3.5 w-3.5 text-primary" />}
+                                      <span className="flex items-center gap-2">
+                                        <span className={cn("h-2 w-2 rounded-full", cfg.text.replace("text-", "bg-"))} />
+                                        {cfg.label}
+                                      </span>
+                                      {lead.lead_status === key && <Check className="h-3.5 w-3.5 text-primary shrink-0" />}
                                     </DropdownMenuItem>
                                   ))}
                                 </DropdownMenuContent>
@@ -1285,6 +1398,22 @@ export default function LeadsPage() {
                                   </Link>
                                 )}
 
+                                {/* Notes Button */}
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleOpenNotes(lead)}
+                                  className="h-8 gap-1 text-xs px-2 cursor-pointer border-purple-500/20 hover:bg-purple-500/10 text-purple-700 dark:text-purple-300"
+                                  title="View and add Counselor & AI Notes"
+                                >
+                                  <Bot className="h-3.5 w-3.5 text-purple-600" />
+                                  <span className="hidden sm:inline">
+                                    {lead.notes && parseLeadNotes(lead.notes).length > 0
+                                      ? `${parseLeadNotes(lead.notes).length} Notes`
+                                      : "Notes"}
+                                  </span>
+                                </Button>
+
                                 {/* Remarks & Questions */}
                                 <DropdownMenu>
                                   <DropdownMenuTrigger
@@ -1294,28 +1423,24 @@ export default function LeadsPage() {
                                       </Button>
                                     }
                                   />
-                                  <DropdownMenuContent align="end" className="w-44">
+                                  <DropdownMenuContent align="end" className="w-48">
                                     <DropdownMenuItem
                                       onClick={() => {
                                         setSelectedLead(lead);
                                         setIsDetailsOpen(true);
                                       }}
-                                      className="text-xs gap-2"
+                                      className="text-xs gap-2 cursor-pointer"
                                     >
-                                      <FileText className="h-3.5 w-3.5" />
+                                      <FileText className="h-3.5 w-3.5 text-blue-500" />
                                       View Form Answers
                                     </DropdownMenuItem>
 
                                     <DropdownMenuItem
-                                      onClick={() => {
-                                        setSelectedLead(lead);
-                                        setNoteText(lead.notes || "");
-                                        setIsNotesOpen(true);
-                                      }}
-                                      className="text-xs gap-2"
+                                      onClick={() => handleOpenNotes(lead)}
+                                      className="text-xs gap-2 cursor-pointer"
                                     >
-                                      <FileText className="h-3.5 w-3.5" />
-                                      Counseling Remarks
+                                      <Bot className="h-3.5 w-3.5 text-purple-600" />
+                                      Counselor & AI Notes
                                     </DropdownMenuItem>
 
                                     {isAdminOrOwner && (
@@ -1403,6 +1528,46 @@ export default function LeadsPage() {
               </div>
             </div>
 
+            {/* Quick Status Dropdown & Notes Bar */}
+            <div className="flex items-center justify-between p-2.5 rounded-lg border border-border bg-card">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground font-medium">Status:</span>
+                {selectedLead && (
+                  <select
+                    value={selectedLead.lead_status}
+                    onChange={(e) => {
+                      const newSt = e.target.value;
+                      handleStatusChange(selectedLead.id, newSt);
+                      setSelectedLead((prev) => (prev ? { ...prev, lead_status: newSt as any } : null));
+                    }}
+                    className="h-8 px-2.5 rounded-md border border-input bg-background text-xs font-semibold text-foreground focus:outline-none focus:ring-1 focus:ring-ring cursor-pointer"
+                  >
+                    {Object.entries(STATUS_CONFIG).map(([key, cfg]) => (
+                      <option key={key} value={key}>
+                        {cfg.label}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  if (selectedLead) {
+                    setIsDetailsOpen(false);
+                    handleOpenNotes(selectedLead);
+                  }
+                }}
+                className="h-8 text-xs gap-1.5 border-purple-500/30 text-purple-600 dark:text-purple-400 hover:bg-purple-500/10 cursor-pointer"
+              >
+                <Bot className="h-3.5 w-3.5 text-purple-600" />
+                Counselor & AI Notes (
+                {selectedLead?.notes ? parseLeadNotes(selectedLead.notes).length : 0})
+              </Button>
+            </div>
+
             <div className="flex flex-col gap-2">
               <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                 Raw Form Questions & Answers
@@ -1432,33 +1597,178 @@ export default function LeadsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Counseling Remarks Dialog */}
+      {/* Multiple Counseling & AI Agent Notes Dialog */}
       <Dialog open={isNotesOpen} onOpenChange={setIsNotesOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-xl max-h-[85vh] flex flex-col">
           <DialogHeader>
-            <DialogTitle>Counseling Remarks</DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              <Bot className="h-5 w-5 text-purple-600" />
+              Lead Notes & AI Agent Knowledge
+            </DialogTitle>
             <DialogDescription>
-              Record notes, call feedback, or next steps for {selectedLead?.full_name}.
+              Counseling history & AI knowledge for{" "}
+              <strong className="text-foreground">{selectedLead?.full_name}</strong>{" "}
+              ({selectedLead?.phone}).
             </DialogDescription>
           </DialogHeader>
 
-          <div className="py-2">
+          {/* AI Knowledge Grounding Banner */}
+          <div className="flex items-start gap-2 p-2.5 rounded-lg bg-purple-500/10 border border-purple-500/20 text-xs text-purple-900 dark:text-purple-200">
+            <Sparkles className="h-4 w-4 text-purple-600 shrink-0 mt-0.5" />
+            <p className="leading-relaxed text-[11px]">
+              <strong>AI Agent Grounding:</strong> Your Gemini AI Agent directly reads all notes recorded here. It uses this knowledge during WhatsApp follow-ups to give personalized, accurate answers without asking repetitive questions.
+            </p>
+          </div>
+
+          {/* Notes History Feed */}
+          <div className="flex-1 min-h-[180px] max-h-[280px] overflow-y-auto p-3 rounded-lg border border-border bg-muted/20 flex flex-col gap-2.5">
+            {currentNotesList.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-8 text-center text-muted-foreground text-xs">
+                <FileText className="h-8 w-8 opacity-30 mb-2" />
+                <p className="font-medium text-foreground">No notes recorded yet</p>
+                <p className="text-[11px] mt-0.5">Add counselor call notes or an AI knowledge directive below.</p>
+              </div>
+            ) : (
+              currentNotesList.map((note) => {
+                const isAi = note.author_type === "ai_agent";
+                return (
+                  <div
+                    key={note.id}
+                    className={cn(
+                      "p-3 rounded-lg border text-xs flex flex-col gap-1.5 shadow-2xs transition-colors",
+                      isAi
+                        ? "bg-purple-500/5 border-purple-500/25 dark:bg-purple-950/20"
+                        : "bg-card border-border"
+                    )}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5">
+                        {isAi ? (
+                          <Badge className="bg-purple-600 text-white text-[10px] px-1.5 py-0 gap-1 flex items-center">
+                            <Bot className="h-3 w-3" />
+                            AI Agent Note
+                          </Badge>
+                        ) : (
+                          <Badge
+                            variant="outline"
+                            className="text-[10px] px-1.5 py-0 gap-1 flex items-center border-blue-500/40 text-blue-600 dark:text-blue-400 bg-blue-500/5"
+                          >
+                            <User className="h-3 w-3" />
+                            Counselor ({note.author_name})
+                          </Badge>
+                        )}
+                      </div>
+                      <span className="text-[10px] text-muted-foreground">
+                        {note.created_at
+                          ? new Date(note.created_at).toLocaleString("en-IN", {
+                              month: "short",
+                              day: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })
+                          : ""}
+                      </span>
+                    </div>
+                    <p className="text-foreground text-xs leading-relaxed whitespace-pre-wrap pl-0.5">
+                      {note.text}
+                    </p>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {/* Add Note Section */}
+          <div className="flex flex-col gap-2 pt-2 border-t border-border">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                <Plus className="h-3.5 w-3.5 text-primary" />
+                Add New Note
+              </label>
+
+              <div className="flex items-center gap-1.5">
+                {/* AI Suggest Note Button */}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleAiSuggestNote}
+                  className="h-7 text-[11px] gap-1 text-purple-600 dark:text-purple-400 hover:bg-purple-500/10 cursor-pointer"
+                  title="Auto-draft an admissions recommendation note based on lead preferences"
+                >
+                  <Sparkles className="h-3 w-3 text-purple-600" />
+                  AI Suggest Note
+                </Button>
+
+                {/* Author Type Selector */}
+                <div className="flex items-center rounded-md border border-input p-0.5 bg-muted/40 text-[11px]">
+                  <button
+                    type="button"
+                    onClick={() => setNoteAuthorType("counselor")}
+                    className={cn(
+                      "px-2 py-0.5 rounded text-[11px] font-medium transition-colors cursor-pointer",
+                      noteAuthorType === "counselor"
+                        ? "bg-background text-foreground shadow-2xs font-semibold"
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    Counselor
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNoteAuthorType("ai_agent")}
+                    className={cn(
+                      "px-2 py-0.5 rounded text-[11px] font-medium transition-colors cursor-pointer flex items-center gap-1",
+                      noteAuthorType === "ai_agent"
+                        ? "bg-purple-600 text-white font-semibold shadow-2xs"
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    <Bot className="h-3 w-3" />
+                    AI Agent
+                  </button>
+                </div>
+              </div>
+            </div>
+
             <Textarea
-              placeholder="e.g. Student is interested in B.Tech CSE 2026 batch. Follow up on Monday..."
-              value={noteText}
-              onChange={(e) => setNoteText(e.target.value)}
-              rows={4}
-              className="text-xs"
+              placeholder={
+                noteAuthorType === "ai_agent"
+                  ? "Directive for AI Agent: e.g. Student scored 82% in Class 12, prefers NIT Warangal CSE, budget 10L NPR. Guide on scholarship eligibility..."
+                  : "Counselor remark: e.g. Called student, confirmed interest in Engineering. Follow up tomorrow regarding fee structure..."
+              }
+              value={newNoteInput}
+              onChange={(e) => setNewNoteInput(e.target.value)}
+              rows={3}
+              className="text-xs resize-none"
             />
           </div>
 
-          <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setIsNotesOpen(false)}>
-              Cancel
-            </Button>
-            <Button size="sm" onClick={handleSaveNotes} disabled={savingNotes}>
-              {savingNotes ? "Saving..." : "Save Remarks"}
-            </Button>
+          <DialogFooter className="flex items-center justify-between sm:justify-between pt-2">
+            <span className="text-[11px] text-muted-foreground">
+              {currentNotesList.length} note(s) recorded
+            </span>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => setIsNotesOpen(false)}>
+                Close
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleAddNote}
+                disabled={addingNote || !newNoteInput.trim()}
+                className={cn(
+                  noteAuthorType === "ai_agent"
+                    ? "bg-purple-600 hover:bg-purple-700 text-white"
+                    : "bg-primary text-primary-foreground"
+                )}
+              >
+                {addingNote
+                  ? "Adding..."
+                  : noteAuthorType === "ai_agent"
+                  ? "Add AI Agent Note"
+                  : "Add Counselor Note"}
+              </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1519,13 +1829,87 @@ export default function LeadsPage() {
             </div>
 
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium">Match Text (Keywords)</label>
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-medium">
+                  {criteriaType === "campaign_name" ? "Campaign Name" : "Match Text (Keywords)"}
+                </label>
+                {criteriaType === "campaign_name" && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => fetchDetectedCampaigns(true)}
+                    disabled={detectingCampaigns}
+                    className="h-6 text-[11px] gap-1 px-1.5 text-purple-600 dark:text-purple-400 hover:bg-purple-500/10 cursor-pointer"
+                  >
+                    <RefreshCw className={cn("h-3 w-3", detectingCampaigns && "animate-spin")} />
+                    Detect from Meta & Ads
+                  </Button>
+                )}
+              </div>
+
+              {criteriaType === "campaign_name" && detectedCampaigns.length > 0 && (
+                <div className="flex flex-col gap-1 my-1 p-2 rounded-md bg-purple-500/5 border border-purple-500/20">
+                  <span className="text-[10px] font-semibold text-purple-700 dark:text-purple-300 uppercase tracking-wider flex items-center gap-1">
+                    <Sparkles className="h-3 w-3 text-purple-600" />
+                    Auto-Detected Campaigns from Meta Ads:
+                  </span>
+                  <div className="flex flex-wrap gap-1 mt-0.5">
+                    {detectedCampaigns.map((c) => (
+                      <button
+                        key={c.name}
+                        type="button"
+                        onClick={() => {
+                          setMatchValue(c.name);
+                          if (!ruleName || ruleName.includes("Auto-Assign") || ruleName.includes("Campaign")) {
+                            setRuleName(`${c.name} Auto-Assign`);
+                          }
+                          setOperator("equals");
+                        }}
+                        className={cn(
+                          "px-2 py-1 rounded text-[11px] font-medium border transition-colors flex items-center gap-1 cursor-pointer",
+                          matchValue === c.name
+                            ? "bg-purple-600 text-white border-purple-600 shadow-2xs"
+                            : "bg-background text-foreground border-border hover:border-purple-400"
+                        )}
+                        title={`${c.name} (${c.leadsCount} leads recorded)`}
+                      >
+                        <Megaphone className="h-2.5 w-2.5" />
+                        <span className="truncate max-w-[140px]">{c.name}</span>
+                        {c.leadsCount > 0 && (
+                          <span
+                            className={cn(
+                              "text-[9px] px-1 rounded-full",
+                              matchValue === c.name ? "bg-white/20 text-white" : "bg-muted text-muted-foreground"
+                            )}
+                          >
+                            {c.leadsCount}
+                          </span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <Input
-                placeholder="e.g. Amity, MBA, B.Tech, or Engineering"
+                placeholder={
+                  criteriaType === "campaign_name"
+                    ? "e.g. GEMS_NIT_Admissions_2027_28"
+                    : "e.g. Amity, MBA, B.Tech, or Engineering"
+                }
                 value={matchValue}
                 onChange={(e) => setMatchValue(e.target.value)}
+                list={criteriaType === "campaign_name" ? "detected-campaigns-list" : undefined}
                 className="h-9 text-xs"
               />
+              {criteriaType === "campaign_name" && (
+                <datalist id="detected-campaigns-list">
+                  {detectedCampaigns.map((c) => (
+                    <option key={c.name} value={c.name} />
+                  ))}
+                </datalist>
+              )}
               <span className="text-[11px] text-muted-foreground">
                 Matches case-insensitively when a lead form includes this keyword.
               </span>

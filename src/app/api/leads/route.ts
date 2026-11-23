@@ -4,6 +4,7 @@ import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { toErrorResponse } from '@/lib/auth/account';
 import { fetchLeadFromMetaGraphApi, processIncomingLead, syncAllLeadsToPipeline, applyLeadAssignmentRules } from '@/lib/leads/meta-leads';
 import { decrypt } from '@/lib/whatsapp/encryption';
+import { parseLeadNotes, serializeLeadNotes, type LeadNote } from '@/lib/leads/notes';
 
 export const dynamic = 'force-dynamic';
 
@@ -166,7 +167,7 @@ export async function GET(request: Request) {
 
     const ruleCampaigns = (campaignRules || []).map((r) => r.match_value).filter(Boolean);
     const campaigns = Array.from(
-      new Set([...visibleLeadsForMeta.map((l) => l.campaign_name).filter(Boolean), ...ruleCampaigns])
+      new Set([...all.map((l) => l.campaign_name).filter(Boolean), ...ruleCampaigns])
     ).sort();
     const visibleAgents = isAgent ? agents.filter((a) => a.userId === user.id) : agents;
 
@@ -205,7 +206,7 @@ export async function PATCH(request: Request) {
     const admin = getAdminClient();
     const { data: profile } = await admin
       .from('profiles')
-      .select('account_id, account_role')
+      .select('account_id, account_role, full_name')
       .eq('user_id', user.id)
       .maybeSingle();
 
@@ -350,7 +351,30 @@ export async function PATCH(request: Request) {
       updates.lead_status = body.lead_status;
     }
 
-    if (typeof body.notes === 'string') {
+    // Support appending a new note object (Counselor Note or AI Agent Note)
+    if (body.new_note && typeof body.new_note === 'object' && body.new_note.text) {
+      const noteText = String(body.new_note.text).trim();
+      if (noteText) {
+        const { data: currentLead } = await admin
+          .from('meta_lead_logs')
+          .select('notes')
+          .eq('id', leadId)
+          .eq('account_id', profile.account_id)
+          .maybeSingle();
+
+        const existingNotes = parseLeadNotes(currentLead?.notes);
+        const newNote: LeadNote = {
+          id: crypto.randomUUID(),
+          text: noteText,
+          author_name: String(body.new_note.author_name || profile.full_name || 'Counselor'),
+          author_type: (body.new_note.author_type || 'counselor') as 'counselor' | 'ai_agent' | 'system',
+          created_at: new Date().toISOString(),
+        };
+        updates.notes = serializeLeadNotes([...existingNotes, newNote]);
+      }
+    } else if (Array.isArray(body.notes)) {
+      updates.notes = serializeLeadNotes(parseLeadNotes(body.notes));
+    } else if (typeof body.notes === 'string') {
       updates.notes = body.notes;
     }
 
@@ -410,7 +434,11 @@ export async function PATCH(request: Request) {
         .eq('contact_id', updatedLead.contact_id);
     }
 
-    return NextResponse.json({ success: true, lead: updatedLead });
+    return NextResponse.json({
+      success: true,
+      lead: updatedLead,
+      parsed_notes: parseLeadNotes(updatedLead.notes),
+    });
   } catch (err) {
     return toErrorResponse(err);
   }
