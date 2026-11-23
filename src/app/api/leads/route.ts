@@ -152,11 +152,22 @@ export async function GET(request: Request) {
           converted: all.filter((l) => l.lead_status === 'enrolled').length,
         };
 
-    // Extract unique filter choices based only on visible leads
+    // Extract unique filter choices based on visible leads and active campaign rules
     const colleges = Array.from(new Set(visibleLeadsForMeta.map((l) => l.college).filter(Boolean))).sort();
     const courses = Array.from(new Set(visibleLeadsForMeta.map((l) => l.course).filter(Boolean))).sort();
     const forms = Array.from(new Set(visibleLeadsForMeta.map((l) => l.form_name).filter(Boolean))).sort();
-    const campaigns = Array.from(new Set(visibleLeadsForMeta.map((l) => l.campaign_name).filter(Boolean))).sort();
+
+    const { data: campaignRules } = await admin
+      .from('lead_assignment_rules')
+      .select('match_value')
+      .eq('account_id', profile.account_id)
+      .eq('criteria_type', 'campaign_name')
+      .eq('is_active', true);
+
+    const ruleCampaigns = (campaignRules || []).map((r) => r.match_value).filter(Boolean);
+    const campaigns = Array.from(
+      new Set([...visibleLeadsForMeta.map((l) => l.campaign_name).filter(Boolean), ...ruleCampaigns])
+    ).sort();
     const visibleAgents = isAgent ? agents.filter((a) => a.userId === user.id) : agents;
 
     return NextResponse.json({

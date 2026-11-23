@@ -452,14 +452,14 @@ export default function LeadsPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          fullName: "Aarav Sharma",
-          phone: "+919876543210",
-          email: "aarav.sharma@example.com",
-          college: "Amity University",
-          course: "B.Tech Computer Science",
-          formName: "GEMS_MBA_NEPAL_2027_HIGH_INTENT",
-          campaignName: "Mamata MBA",
-          adName: "ad1",
+          fullName: "Rohan Verma",
+          phone: "+9779812345678",
+          email: "rohan.verma@example.com",
+          college: "NIT Rourkela",
+          course: "Computer Science",
+          formName: "GEMS_NIT_Engineering_2027_28_Nepal",
+          campaignName: "GEMS_NIT_Admissions_2027_28",
+          adName: "ad2",
         }),
       });
       if (!res.ok) throw new Error("Simulation failed");

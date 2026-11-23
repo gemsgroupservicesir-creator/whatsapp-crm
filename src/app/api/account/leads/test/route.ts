@@ -55,12 +55,12 @@ export async function POST(request: Request) {
     const fullName = body?.fullName?.trim() || 'Test Meta Lead';
     const phone = body?.phone?.trim() || '+919876543210';
     const email = body?.email?.trim() || 'test.lead@example.com';
-    const college = body?.college?.trim() || 'Amity University';
-    const course = body?.course?.trim() || 'B.Tech Computer Science';
-    const city = body?.city?.trim() || 'New Delhi';
-    const formName = body?.formName?.trim() || 'GEMS_MBA_NEPAL_2027_HIGH_INTENT';
-    const campaignName = body?.campaignName?.trim() || 'Mamata MBA';
-    const adName = body?.adName?.trim() || 'ad1';
+    const college = body?.college?.trim() || 'NIT Rourkela';
+    const course = body?.course?.trim() || 'Computer Science';
+    const city = body?.city?.trim() || 'Birgunj';
+    const formName = body?.formName?.trim() || 'GEMS_NIT_Engineering_2027_28_Nepal';
+    const campaignName = body?.campaignName?.trim() || 'GEMS_NIT_Admissions_2027_28';
+    const adName = body?.adName?.trim() || 'ad2';
 
     const result = await processIncomingLead(profile.account_id, {
       fullName,

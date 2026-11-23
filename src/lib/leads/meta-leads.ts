@@ -47,7 +47,8 @@ export async function fetchLeadFromMetaGraphApi(
   pageAccessToken: string
 ): Promise<IncomingLeadPayload | null> {
   try {
-    const url = `https://graph.facebook.com/v21.0/${leadgenId}?access_token=${encodeURIComponent(pageAccessToken)}`;
+    const fields = 'id,created_time,field_data,form_id,campaign_id,campaign_name,ad_id,ad_name,adset_id,adset_name';
+    const url = `https://graph.facebook.com/v21.0/${leadgenId}?fields=${fields}&access_token=${encodeURIComponent(pageAccessToken)}`;
     const res = await fetch(url, { headers: { Accept: 'application/json' } });
     if (!res.ok) {
       const errData = await res.json().catch(() => null);
@@ -113,6 +114,26 @@ export async function fetchLeadFromMetaGraphApi(
       }
     }
 
+    // Format institution and course to clean Title Case with common acronyms (NIT, IIT, CSE, etc.)
+    if (college) {
+      college = college
+        .replace(/_/g, ' ')
+        .replace(/\bnit\b/gi, 'NIT')
+        .replace(/\biit\b/gi, 'IIT')
+        .replace(/\biiit\b/gi, 'IIIT')
+        .replace(/\b\w/g, (c) => c.toUpperCase());
+    }
+    if (course) {
+      course = course
+        .replace(/_/g, ' ')
+        .replace(/\bcse\b/gi, 'CSE')
+        .replace(/\beit\b/gi, 'IT')
+        .replace(/\bece\b/gi, 'ECE')
+        .replace(/\bmba\b/gi, 'MBA')
+        .replace(/\bb\.?tech\b/gi, 'B.Tech')
+        .replace(/\b\w/g, (c) => c.toUpperCase());
+    }
+
     // Fallback: If phone is still not detected, scan for any field value that looks like a phone number
     if (!phone) {
       for (const f of fieldData) {
@@ -125,12 +146,28 @@ export async function fetchLeadFromMetaGraphApi(
       }
     }
 
-    const campaignName = (data.campaign_name || data.campaign?.name || '').trim();
+    let campaignName = (data.campaign_name || data.campaign?.name || '').trim();
     const campaignId = (data.campaign_id || data.campaign?.id || '').trim();
     const adName = (data.ad_name || data.ad?.name || '').trim();
     const adId = (data.ad_id || data.ad?.id || '').trim();
     let formName = (data.form_name || '').trim();
 
+    // Fallback: if campaign_name is missing but campaign_id exists, fetch campaign name
+    if (!campaignName && campaignId) {
+      try {
+        const campRes = await fetch(
+          `https://graph.facebook.com/v21.0/${campaignId}?fields=name&access_token=${encodeURIComponent(pageAccessToken)}`
+        );
+        if (campRes.ok) {
+          const campData = await campRes.json();
+          if (campData?.name) campaignName = String(campData.name).trim();
+        }
+      } catch {
+        // Ignore fallback campaign name fetch error
+      }
+    }
+
+    // Fallback: if form_name is missing but form_id exists, fetch form name
     if (!formName && data.form_id) {
       try {
         const formRes = await fetch(
