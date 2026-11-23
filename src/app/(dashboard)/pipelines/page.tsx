@@ -54,7 +54,7 @@ export default function PipelinesPage() {
   const supabase = createClient();
   const canEditSettings = useCan("edit-settings");
   const canCreateDeals = useCan("send-messages");
-  const { accountId } = useAuth();
+  const { accountId, accountRole, profile } = useAuth();
 
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [selectedPipelineId, setSelectedPipelineId] = useState<string>("");
@@ -103,14 +103,20 @@ export default function PipelinesPage() {
 
   const loadDeals = useCallback(
     async (pipelineId: string) => {
-      const { data } = await supabase
+      let query = supabase
         .from("deals")
         .select("*, contact:contacts(*), assignee:profiles!deals_assigned_to_fkey(*)")
-        .eq("pipeline_id", pipelineId)
-        .order("created_at", { ascending: false });
+        .eq("pipeline_id", pipelineId);
+
+      // If user is an agent, restrict deal visibility strictly to their assigned deals
+      if (accountRole === "agent" && profile?.id) {
+        query = query.eq("assigned_to", profile.id);
+      }
+
+      const { data } = await query.order("created_at", { ascending: false });
       return (data ?? []) as Deal[];
     },
-    [supabase],
+    [supabase, accountRole, profile?.id],
   );
 
   const seedDefaultPipeline = useCallback(async (): Promise<Pipeline | null> => {

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { toErrorResponse } from '@/lib/auth/account';
-import { fetchLeadFromMetaGraphApi, processIncomingLead, syncAllLeadsToPipeline } from '@/lib/leads/meta-leads';
+import { fetchLeadFromMetaGraphApi, processIncomingLead, syncAllLeadsToPipeline, applyLeadAssignmentRules } from '@/lib/leads/meta-leads';
 import { decrypt } from '@/lib/whatsapp/encryption';
 
 export const dynamic = 'force-dynamic';
@@ -51,6 +51,8 @@ export async function GET(request: Request) {
     const agentId = url.searchParams.get('agentId');
     const search = url.searchParams.get('search')?.trim().toLowerCase();
 
+    const isAgent = profile.account_role === 'agent';
+
     // 1. Fetch team members/agents for assignment dropdown
     const { data: teamProfiles } = await admin
       .from('profiles')
@@ -67,19 +69,24 @@ export async function GET(request: Request) {
 
     const agentMap = new Map(agents.map((a) => [a.userId, a]));
 
-    // 2. Fetch leads
+    // 2. Fetch leads (Lockdown: regular agents ONLY see leads assigned to themselves)
     let query = admin
       .from('meta_lead_logs')
       .select('*')
       .eq('account_id', accountId)
       .order('created_at', { ascending: false });
 
-    if (tab === 'my') {
+    if (isAgent) {
+      // Agents strictly see ONLY leads assigned to them; other agents' leads are never returned
       query = query.eq('assigned_to', user.id);
-    } else if (tab === 'unassigned') {
-      query = query.is('assigned_to', null);
-    } else if (agentId) {
-      query = query.eq('assigned_to', agentId);
+    } else {
+      if (tab === 'my') {
+        query = query.eq('assigned_to', user.id);
+      } else if (tab === 'unassigned') {
+        query = query.is('assigned_to', null);
+      } else if (agentId) {
+        query = query.eq('assigned_to', agentId);
+      }
     }
 
     if (status && status !== 'all') {
@@ -121,30 +128,41 @@ export async function GET(request: Request) {
       assigned_agent: l.assigned_to ? agentMap.get(l.assigned_to) || null : null,
     }));
 
-    // 3. Stats for header cards
+    // 3. Stats for header cards (Lockdown: agent stats only include their own assigned leads)
     const { data: allAccountLeads } = await admin
       .from('meta_lead_logs')
       .select('id, assigned_to, lead_status, college, course, form_name, campaign_name')
       .eq('account_id', accountId);
 
     const all = allAccountLeads || [];
-    const stats = {
-      total: all.length,
-      myLeads: all.filter((l) => l.assigned_to === user.id).length,
-      unassigned: all.filter((l) => !l.assigned_to).length,
-      converted: all.filter((l) => l.lead_status === 'enrolled').length,
-    };
+    const myLeadsList = all.filter((l) => l.assigned_to === user.id);
+    const visibleLeadsForMeta = isAgent ? myLeadsList : all;
 
-    // Extract unique filter choices
-    const colleges = Array.from(new Set(all.map((l) => l.college).filter(Boolean))).sort();
-    const courses = Array.from(new Set(all.map((l) => l.course).filter(Boolean))).sort();
-    const forms = Array.from(new Set(all.map((l) => l.form_name).filter(Boolean))).sort();
-    const campaigns = Array.from(new Set(all.map((l) => l.campaign_name).filter(Boolean))).sort();
+    const stats = isAgent
+      ? {
+          total: myLeadsList.length,
+          myLeads: myLeadsList.length,
+          unassigned: 0,
+          converted: myLeadsList.filter((l) => l.lead_status === 'enrolled').length,
+        }
+      : {
+          total: all.length,
+          myLeads: myLeadsList.length,
+          unassigned: all.filter((l) => !l.assigned_to).length,
+          converted: all.filter((l) => l.lead_status === 'enrolled').length,
+        };
+
+    // Extract unique filter choices based only on visible leads
+    const colleges = Array.from(new Set(visibleLeadsForMeta.map((l) => l.college).filter(Boolean))).sort();
+    const courses = Array.from(new Set(visibleLeadsForMeta.map((l) => l.course).filter(Boolean))).sort();
+    const forms = Array.from(new Set(visibleLeadsForMeta.map((l) => l.form_name).filter(Boolean))).sort();
+    const campaigns = Array.from(new Set(visibleLeadsForMeta.map((l) => l.campaign_name).filter(Boolean))).sort();
+    const visibleAgents = isAgent ? agents.filter((a) => a.userId === user.id) : agents;
 
     return NextResponse.json({
       leads: enrichedLeads,
       stats,
-      agents,
+      agents: visibleAgents,
       colleges,
       courses,
       forms,
@@ -195,11 +213,45 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ success: true, syncedCount });
     }
 
+    // Support applying auto-assignment rules to unassigned leads
+    if (body.action === 'apply_rules') {
+      if (profile.account_role !== 'owner' && profile.account_role !== 'admin') {
+        return NextResponse.json({ error: 'Only admins can run auto-assignment rules' }, { status: 403 });
+      }
+      const applyResult = await applyLeadAssignmentRules(
+        admin,
+        profile.account_id,
+        body.onlyUnassigned !== false
+      );
+      return NextResponse.json({ success: true, ...applyResult });
+    }
+
     if (!body.id) {
       return NextResponse.json({ error: 'Lead id is required' }, { status: 400 });
     }
 
     const leadId = String(body.id);
+    const isAgent = profile.account_role === 'agent';
+
+    if (isAgent) {
+      if ('assigned_to' in body) {
+        return NextResponse.json({ error: 'Permission denied: agents cannot reassign leads' }, { status: 403 });
+      }
+
+      const { data: targetLead } = await admin
+        .from('meta_lead_logs')
+        .select('assigned_to')
+        .eq('id', leadId)
+        .eq('account_id', profile.account_id)
+        .maybeSingle();
+
+      if (!targetLead || targetLead.assigned_to !== user.id) {
+        return NextResponse.json(
+          { error: 'Permission denied: you can only update leads assigned to you' },
+          { status: 403 }
+        );
+      }
+    }
 
     // Support re-fetching lead details from Meta Graph API when a valid token is provided
     if (body.action === 'retry_fetch') {
@@ -421,24 +473,12 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ error: 'Lead id is required' }, { status: 400 });
     }
 
-    // Role check: Admins/Owners can delete any lead. Agents can delete if unassigned or assigned to them.
+    // Role check: Only Admins and Owners can delete leads
     if (profile.account_role !== 'owner' && profile.account_role !== 'admin') {
-      const { data: leads } = await admin
-        .from('meta_lead_logs')
-        .select('id, assigned_to')
-        .in('id', leadIds)
-        .eq('account_id', profile.account_id);
-
-      const unauthorized = (leads || []).some(
-        (l) => l.assigned_to !== user.id && l.assigned_to !== null
+      return NextResponse.json(
+        { error: 'Permission denied: only admins or owners can delete leads' },
+        { status: 403 }
       );
-
-      if (unauthorized) {
-        return NextResponse.json(
-          { error: 'Permission denied: only admins can delete leads assigned to other agents' },
-          { status: 403 }
-        );
-      }
     }
 
     const { error: deleteError } = await admin

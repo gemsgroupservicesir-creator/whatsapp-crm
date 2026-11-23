@@ -241,6 +241,106 @@ export async function matchLeadAssignmentRule(
 }
 
 /**
+ * Automatically applies active auto-assignment rules to leads in the workspace.
+ * By default, only unassigned leads (assigned_to is null) are evaluated.
+ * Updates meta_lead_logs, conversations, and pipeline deals.
+ */
+export async function applyLeadAssignmentRules(
+  admin: SupabaseClient,
+  accountId: string,
+  onlyUnassigned = true
+): Promise<{ assignedCount: number; matchedLeads: Array<{ id: string; name: string; assignedTo: string }> }> {
+  try {
+    const { data: rules } = await admin
+      .from('lead_assignment_rules')
+      .select('*')
+      .eq('account_id', accountId)
+      .eq('is_active', true)
+      .order('priority', { ascending: true })
+      .order('created_at', { ascending: true });
+
+    if (!rules || rules.length === 0) {
+      return { assignedCount: 0, matchedLeads: [] };
+    }
+
+    let query = admin
+      .from('meta_lead_logs')
+      .select('id, full_name, form_name, campaign_name, college, course, conversation_id, contact_id, assigned_to')
+      .eq('account_id', accountId);
+
+    if (onlyUnassigned) {
+      query = query.is('assigned_to', null);
+    }
+
+    const { data: leads, error: leadsError } = await query;
+    if (leadsError || !leads || leads.length === 0) {
+      return { assignedCount: 0, matchedLeads: [] };
+    }
+
+    let assignedCount = 0;
+    const matchedLeads: Array<{ id: string; name: string; assignedTo: string }> = [];
+
+    // Cache profiles map for updating deals.assigned_to (which points to profiles.id)
+    const { data: profiles } = await admin
+      .from('profiles')
+      .select('id, user_id')
+      .eq('account_id', accountId);
+
+    const userToProfileMap = new Map((profiles || []).map((p) => [p.user_id, p.id]));
+
+    for (const lead of leads) {
+      const matchedUserId = await matchLeadAssignmentRule(admin, accountId, {
+        formName: lead.form_name || undefined,
+        campaignName: lead.campaign_name || undefined,
+        college: lead.college || undefined,
+        course: lead.course || undefined,
+      });
+
+      if (matchedUserId) {
+        assignedCount++;
+        matchedLeads.push({ id: lead.id, name: lead.full_name, assignedTo: matchedUserId });
+
+        const now = new Date().toISOString();
+
+        // 1. Update lead log
+        await admin
+          .from('meta_lead_logs')
+          .update({
+            assigned_to: matchedUserId,
+            assigned_at: now,
+            updated_at: now,
+          })
+          .eq('id', lead.id);
+
+        // 2. Update conversation
+        if (lead.conversation_id) {
+          await admin
+            .from('conversations')
+            .update({ assigned_agent_id: matchedUserId })
+            .eq('id', lead.conversation_id);
+        }
+
+        // 3. Update pipeline deal if exists
+        if (lead.contact_id) {
+          const profileId = userToProfileMap.get(matchedUserId);
+          if (profileId) {
+            await admin
+              .from('deals')
+              .update({ assigned_to: profileId, updated_at: now })
+              .eq('contact_id', lead.contact_id);
+          }
+        }
+      }
+    }
+
+    return { assignedCount, matchedLeads };
+  } catch (err) {
+    console.error('[applyLeadAssignmentRules] Error:', err);
+    return { assignedCount: 0, matchedLeads: [] };
+  }
+}
+
+/**
  * Ingests a Meta Lead into the CRM:
  * 1. Sanitizes phone number.
  * 2. Creates/Finds Contact and applies tag.

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { toErrorResponse } from '@/lib/auth/account';
+import { applyLeadAssignmentRules } from '@/lib/leads/meta-leads';
 
 export const dynamic = 'force-dynamic';
 
@@ -108,8 +109,18 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
     }
 
+    // Support manual trigger to apply rules to existing leads
+    if (body.action === 'apply') {
+      const applyResult = await applyLeadAssignmentRules(
+        admin,
+        profile.account_id,
+        body.onlyUnassigned !== false
+      );
+      return NextResponse.json({ success: true, ...applyResult });
+    }
+
     const name = String(body.name || '').trim();
-    const criteriaType = String(body.criteria_type || 'college'); // 'college' | 'course' | 'form_name' | 'any'
+    const criteriaType = String(body.criteria_type || 'college'); // 'college' | 'course' | 'form_name' | 'campaign_name' | 'any'
     const operator = String(body.operator || 'contains'); // 'contains' | 'equals' | 'starts_with' | 'ends_with'
     const matchValue = String(body.match_value || '').trim();
     const assignToUserId = String(body.assign_to_user_id || '').trim();
@@ -142,7 +153,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: insertError.message }, { status: 500 });
     }
 
-    return NextResponse.json({ success: true, rule: newRule });
+    // Automatically apply rules to unassigned leads immediately upon rule creation
+    const autoApplyResult = await applyLeadAssignmentRules(admin, profile.account_id, true);
+
+    return NextResponse.json({
+      success: true,
+      rule: newRule,
+      assignedCount: autoApplyResult.assignedCount,
+    });
   } catch (err) {
     return toErrorResponse(err);
   }
@@ -208,7 +226,14 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: updateError?.message || 'Rule not found' }, { status: 404 });
     }
 
-    return NextResponse.json({ success: true, rule: updatedRule });
+    // Automatically re-evaluate unassigned leads upon rule update
+    const autoApplyResult = await applyLeadAssignmentRules(admin, profile.account_id, true);
+
+    return NextResponse.json({
+      success: true,
+      rule: updatedRule,
+      assignedCount: autoApplyResult.assignedCount,
+    });
   } catch (err) {
     return toErrorResponse(err);
   }

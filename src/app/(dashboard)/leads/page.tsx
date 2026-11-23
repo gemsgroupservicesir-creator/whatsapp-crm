@@ -159,6 +159,7 @@ export default function LeadsPage() {
   // Assignment Rules state
   const [rules, setRules] = useState<AssignmentRule[]>([]);
   const [loadingRules, setLoadingRules] = useState(false);
+  const [applyingRules, setApplyingRules] = useState(false);
   const [isNewRuleOpen, setIsNewRuleOpen] = useState(false);
   const [ruleName, setRuleName] = useState("");
   const [criteriaType, setCriteriaType] = useState<"college" | "course" | "form_name" | "campaign_name" | "any">("college");
@@ -170,6 +171,26 @@ export default function LeadsPage() {
 
   // Test Simulator state
   const [simulating, setSimulating] = useState(false);
+
+  const handleApplyRules = async () => {
+    try {
+      setApplyingRules(true);
+      const res = await fetch("/api/leads/rules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "apply" }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to run auto-assignment");
+      toast.success(data.message || `Auto-assignment completed! Assigned ${data.assignedCount ?? 0} leads.`);
+      fetchLeads();
+      if (activeTab === "rules") fetchRules();
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to run auto-assignment");
+    } finally {
+      setApplyingRules(false);
+    }
+  };
 
   const fetchLeads = useCallback(async () => {
     try {
@@ -198,8 +219,8 @@ export default function LeadsPage() {
       setCurrentUserId(data.currentUserId || "");
       setUserRole(data.userRole || "");
 
-      // Default agents directly to "my" leads tab once on first load
-      if (!initialTabSetRef.current && data.userRole === "agent" && activeTab === "all" && data.stats?.myLeads > 0) {
+      // Enforce agents strictly to "my" leads tab
+      if (data.userRole === "agent" && activeTab !== "my") {
         initialTabSetRef.current = true;
         setActiveTab("my");
       }
@@ -470,75 +491,149 @@ export default function LeadsPage() {
             Refresh
           </Button>
 
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleSimulateLead}
-            disabled={simulating}
-            className="h-9 gap-1.5 border-purple-500/30 text-purple-600 dark:text-purple-400 hover:bg-purple-500/10"
-          >
-            <Sparkles className={cn("h-4 w-4 text-purple-500", simulating && "animate-spin")} />
-            Test Lead Simulator
-          </Button>
+          {isAdminOrOwner && (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleApplyRules}
+                disabled={applyingRules}
+                className="h-9 gap-1.5 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 cursor-pointer"
+                title="Run active auto-assignment rules on all unassigned leads"
+              >
+                <SlidersHorizontal className={cn("h-4 w-4 text-emerald-500", applyingRules && "animate-spin")} />
+                Run Auto-Assignment
+              </Button>
 
-          <Link href="/settings?tab=leads">
-            <Button size="sm" className="h-9 gap-1.5 bg-primary text-primary-foreground">
-              <Share2 className="h-4 w-4" />
-              Meta Webhook Settings
-            </Button>
-          </Link>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleSimulateLead}
+                disabled={simulating}
+                className="h-9 gap-1.5 border-purple-500/30 text-purple-600 dark:text-purple-400 hover:bg-purple-500/10"
+              >
+                <Sparkles className={cn("h-4 w-4 text-purple-500", simulating && "animate-spin")} />
+                Test Lead Simulator
+              </Button>
+
+              <Link href="/settings?tab=leads">
+                <Button size="sm" className="h-9 gap-1.5 bg-primary text-primary-foreground">
+                  <Share2 className="h-4 w-4" />
+                  Meta Webhook Settings
+                </Button>
+              </Link>
+            </>
+          )}
         </div>
       </div>
 
       {/* Metrics Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
-        <Card className="bg-card border-border shadow-xs">
-          <CardContent className="p-4 flex items-center justify-between">
-            <div>
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Total Leads</p>
-              <h3 className="text-2xl font-bold mt-1">{stats.total}</h3>
-            </div>
-            <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
-              <UserCheck className="h-5 w-5" />
-            </div>
-          </CardContent>
-        </Card>
+        {isAdminOrOwner ? (
+          <>
+            <Card className="bg-card border-border shadow-xs">
+              <CardContent className="p-4 flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Total Leads</p>
+                  <h3 className="text-2xl font-bold mt-1">{stats.total}</h3>
+                </div>
+                <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
+                  <UserCheck className="h-5 w-5" />
+                </div>
+              </CardContent>
+            </Card>
 
-        <Card className="bg-card border-border shadow-xs border-blue-500/20 bg-blue-500/5">
-          <CardContent className="p-4 flex items-center justify-between">
-            <div>
-              <p className="text-xs font-medium text-blue-600 dark:text-blue-400 uppercase tracking-wider">My Leads</p>
-              <h3 className="text-2xl font-bold mt-1 text-blue-600 dark:text-blue-400">{stats.myLeads}</h3>
-            </div>
-            <div className="h-10 w-10 rounded-lg bg-blue-500/20 flex items-center justify-center text-blue-500">
-              <User className="h-5 w-5" />
-            </div>
-          </CardContent>
-        </Card>
+            <Card className="bg-card border-border shadow-xs border-blue-500/20 bg-blue-500/5">
+              <CardContent className="p-4 flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-medium text-blue-600 dark:text-blue-400 uppercase tracking-wider">My Leads</p>
+                  <h3 className="text-2xl font-bold mt-1 text-blue-600 dark:text-blue-400">{stats.myLeads}</h3>
+                </div>
+                <div className="h-10 w-10 rounded-lg bg-blue-500/20 flex items-center justify-center text-blue-500">
+                  <User className="h-5 w-5" />
+                </div>
+              </CardContent>
+            </Card>
 
-        <Card className="bg-card border-border shadow-xs">
-          <CardContent className="p-4 flex items-center justify-between">
-            <div>
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Unassigned</p>
-              <h3 className="text-2xl font-bold mt-1 text-amber-500">{stats.unassigned}</h3>
-            </div>
-            <div className="h-10 w-10 rounded-lg bg-amber-500/10 flex items-center justify-center text-amber-500">
-              <AlertCircle className="h-5 w-5" />
-            </div>
-          </CardContent>
-        </Card>
+            <Card className="bg-card border-border shadow-xs">
+              <CardContent className="p-4 flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Unassigned</p>
+                  <h3 className="text-2xl font-bold mt-1 text-amber-500">{stats.unassigned}</h3>
+                </div>
+                <div className="h-10 w-10 rounded-lg bg-amber-500/10 flex items-center justify-center text-amber-500">
+                  <AlertCircle className="h-5 w-5" />
+                </div>
+              </CardContent>
+            </Card>
 
-        <Card className="bg-card border-border shadow-xs">
-          <CardContent className="p-4 flex items-center justify-between">
-            <div>
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Enrolled / Won</p>
-              <h3 className="text-2xl font-bold mt-1 text-emerald-500">{stats.converted}</h3>
-            </div>
-            <div className="h-10 w-10 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-500">
-              <CheckCircle2 className="h-5 w-5" />
-            </div>
-          </CardContent>
-        </Card>
+            <Card className="bg-card border-border shadow-xs">
+              <CardContent className="p-4 flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Enrolled / Won</p>
+                  <h3 className="text-2xl font-bold mt-1 text-emerald-500">{stats.converted}</h3>
+                </div>
+                <div className="h-10 w-10 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-500">
+                  <CheckCircle2 className="h-5 w-5" />
+                </div>
+              </CardContent>
+            </Card>
+          </>
+        ) : (
+          <>
+            <Card className="bg-card border-border shadow-xs border-blue-500/20 bg-blue-500/5">
+              <CardContent className="p-4 flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-medium text-blue-600 dark:text-blue-400 uppercase tracking-wider">My Assigned Leads</p>
+                  <h3 className="text-2xl font-bold mt-1 text-blue-600 dark:text-blue-400">{stats.myLeads}</h3>
+                </div>
+                <div className="h-10 w-10 rounded-lg bg-blue-500/20 flex items-center justify-center text-blue-500">
+                  <User className="h-5 w-5" />
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-card border-border shadow-xs">
+              <CardContent className="p-4 flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">New Inquiries</p>
+                  <h3 className="text-2xl font-bold mt-1 text-blue-500">
+                    {leads.filter((l) => l.lead_status === "new").length}
+                  </h3>
+                </div>
+                <div className="h-10 w-10 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-500">
+                  <Clock className="h-5 w-5" />
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-card border-border shadow-xs">
+              <CardContent className="p-4 flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">In Counseling</p>
+                  <h3 className="text-2xl font-bold mt-1 text-indigo-500">
+                    {leads.filter((l) => ["contacted", "interested", "in_progress"].includes(l.lead_status)).length}
+                  </h3>
+                </div>
+                <div className="h-10 w-10 rounded-lg bg-indigo-500/10 flex items-center justify-center text-indigo-500">
+                  <GraduationCap className="h-5 w-5" />
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-card border-border shadow-xs">
+              <CardContent className="p-4 flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Enrolled / Won</p>
+                  <h3 className="text-2xl font-bold mt-1 text-emerald-500">{stats.converted}</h3>
+                </div>
+                <div className="h-10 w-10 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-500">
+                  <CheckCircle2 className="h-5 w-5" />
+                </div>
+              </CardContent>
+            </Card>
+          </>
+        )}
       </div>
 
       {/* Alert banner if Meta lead webhook arrived but needs valid token */}
@@ -574,63 +669,78 @@ export default function LeadsPage() {
       {/* Tabs Navigation */}
       <div className="flex items-center justify-between border-b border-border">
         <div className="flex gap-2">
-          <button
-            onClick={() => setActiveTab("all")}
-            className={cn(
-              "flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors",
-              activeTab === "all"
-                ? "border-primary text-primary"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            )}
-          >
-            All Leads
-            <Badge variant="secondary" className="text-xs px-1.5 py-0">
-              {stats.total}
-            </Badge>
-          </button>
+          {isAdminOrOwner ? (
+            <>
+              <button
+                onClick={() => setActiveTab("all")}
+                className={cn(
+                  "flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors",
+                  activeTab === "all"
+                    ? "border-primary text-primary"
+                    : "border-transparent text-muted-foreground hover:text-foreground"
+                )}
+              >
+                All Leads
+                <Badge variant="secondary" className="text-xs px-1.5 py-0">
+                  {stats.total}
+                </Badge>
+              </button>
 
-          <button
-            onClick={() => setActiveTab("my")}
-            className={cn(
-              "flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors",
-              activeTab === "my"
-                ? "border-primary text-primary"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            )}
-          >
-            My Leads
-            <Badge variant="secondary" className="text-xs px-1.5 py-0 bg-blue-500/10 text-blue-500 border-none">
-              {stats.myLeads}
-            </Badge>
-          </button>
+              <button
+                onClick={() => setActiveTab("my")}
+                className={cn(
+                  "flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors",
+                  activeTab === "my"
+                    ? "border-primary text-primary"
+                    : "border-transparent text-muted-foreground hover:text-foreground"
+                )}
+              >
+                My Leads
+                <Badge variant="secondary" className="text-xs px-1.5 py-0 bg-blue-500/10 text-blue-500 border-none">
+                  {stats.myLeads}
+                </Badge>
+              </button>
 
-          <button
-            onClick={() => setActiveTab("unassigned")}
-            className={cn(
-              "flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors",
-              activeTab === "unassigned"
-                ? "border-primary text-primary"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            )}
-          >
-            Unassigned
-            <Badge variant="secondary" className="text-xs px-1.5 py-0 bg-amber-500/10 text-amber-500 border-none">
-              {stats.unassigned}
-            </Badge>
-          </button>
+              <button
+                onClick={() => setActiveTab("unassigned")}
+                className={cn(
+                  "flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors",
+                  activeTab === "unassigned"
+                    ? "border-primary text-primary"
+                    : "border-transparent text-muted-foreground hover:text-foreground"
+                )}
+              >
+                Unassigned
+                <Badge variant="secondary" className="text-xs px-1.5 py-0 bg-amber-500/10 text-amber-500 border-none">
+                  {stats.unassigned}
+                </Badge>
+              </button>
 
-          <button
-            onClick={() => setActiveTab("rules")}
-            className={cn(
-              "flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors",
-              activeTab === "rules"
-                ? "border-primary text-primary"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            )}
-          >
-            <SlidersHorizontal className="h-4 w-4" />
-            Auto-Assign Rules
-          </button>
+              <button
+                onClick={() => setActiveTab("rules")}
+                className={cn(
+                  "flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors",
+                  activeTab === "rules"
+                    ? "border-primary text-primary"
+                    : "border-transparent text-muted-foreground hover:text-foreground"
+                )}
+              >
+                <SlidersHorizontal className="h-4 w-4" />
+                Auto-Assign Rules
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={() => setActiveTab("my")}
+              className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 border-primary text-primary transition-colors"
+            >
+              <User className="h-4 w-4" />
+              My Assigned Leads
+              <Badge variant="secondary" className="text-xs px-1.5 py-0 bg-blue-500/10 text-blue-500 border-none">
+                {stats.myLeads}
+              </Badge>
+            </button>
+          )}
         </div>
       </div>
 
@@ -642,14 +752,26 @@ export default function LeadsPage() {
             <div>
               <h2 className="text-lg font-semibold">Auto-Assignment Rules</h2>
               <p className="text-xs text-muted-foreground">
-                Automatically route incoming Meta leads to specific agents based on College, Course, or Form Name.
+                Automatically route incoming Meta leads to specific agents based on College, Course, Campaign, or Form Name.
               </p>
             </div>
             {isAdminOrOwner && (
-              <Button onClick={() => setIsNewRuleOpen(true)} size="sm" className="gap-1.5">
-                <Plus className="h-4 w-4" />
-                Add New Rule
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleApplyRules}
+                  disabled={applyingRules}
+                  className="gap-1.5 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 cursor-pointer"
+                >
+                  <SlidersHorizontal className={cn("h-4 w-4 text-emerald-500", applyingRules && "animate-spin")} />
+                  {applyingRules ? "Applying Rules..." : "Apply to Unassigned Leads"}
+                </Button>
+                <Button onClick={() => setIsNewRuleOpen(true)} size="sm" className="gap-1.5">
+                  <Plus className="h-4 w-4" />
+                  Add New Rule
+                </Button>
+              </div>
             )}
           </div>
 
@@ -1024,42 +1146,55 @@ export default function LeadsPage() {
                               </DropdownMenu>
                             </TableCell>
 
-                            {/* Counselor Dropdown */}
+                            {/* Counselor Dropdown / Static Badge */}
                             <TableCell>
-                              <DropdownMenu>
-                                <DropdownMenuTrigger className="flex items-center gap-1.5 text-xs text-left hover:bg-muted/80 px-2 py-1 rounded-md border border-input transition-colors cursor-pointer">
+                              {isAdminOrOwner ? (
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger className="flex items-center gap-1.5 text-xs text-left hover:bg-muted/80 px-2 py-1 rounded-md border border-input transition-colors cursor-pointer">
+                                    <Avatar className="h-5 w-5">
+                                      <AvatarFallback className="text-[9px] bg-primary/10 text-primary">
+                                        {lead.assigned_agent?.fullName?.slice(0, 2).toUpperCase() || "UN"}
+                                      </AvatarFallback>
+                                    </Avatar>
+                                    <span className="truncate max-w-[100px]">
+                                      {lead.assigned_agent?.fullName || "Unassigned"}
+                                    </span>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="start" className="w-52">
+                                    <DropdownMenuLabel className="text-xs">Assign Counselor</DropdownMenuLabel>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem
+                                      onClick={() => handleAssignAgent(lead.id, null)}
+                                      className="text-xs text-muted-foreground"
+                                    >
+                                      Unassigned
+                                    </DropdownMenuItem>
+                                    {agents.map((a) => (
+                                      <DropdownMenuItem
+                                        key={a.userId}
+                                        onClick={() => handleAssignAgent(lead.id, a.userId)}
+                                        className="text-xs flex items-center justify-between"
+                                      >
+                                        <span>{a.fullName}</span>
+                                        {lead.assigned_to === a.userId && (
+                                          <CheckCircle2 className="h-3.5 w-3.5 text-primary" />
+                                        )}
+                                      </DropdownMenuItem>
+                                    ))}
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              ) : (
+                                <div className="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-md border border-input/60 bg-muted/40">
                                   <Avatar className="h-5 w-5">
                                     <AvatarFallback className="text-[9px] bg-primary/10 text-primary">
-                                      {lead.assigned_agent?.fullName?.slice(0, 2).toUpperCase() || "UN"}
+                                      {lead.assigned_agent?.fullName?.slice(0, 2).toUpperCase() || "AG"}
                                     </AvatarFallback>
                                   </Avatar>
-                                  <span className="truncate max-w-[100px]">
-                                    {lead.assigned_agent?.fullName || "Unassigned"}
+                                  <span className="truncate max-w-[100px] font-medium text-foreground">
+                                    {lead.assigned_agent?.fullName || "Assigned"}
                                   </span>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="start" className="w-52">
-                                  <DropdownMenuLabel className="text-xs">Assign Counselor</DropdownMenuLabel>
-                                  <DropdownMenuSeparator />
-                                  <DropdownMenuItem
-                                    onClick={() => handleAssignAgent(lead.id, null)}
-                                    className="text-xs text-muted-foreground"
-                                  >
-                                    Unassigned
-                                  </DropdownMenuItem>
-                                  {agents.map((a) => (
-                                    <DropdownMenuItem
-                                      key={a.userId}
-                                      onClick={() => handleAssignAgent(lead.id, a.userId)}
-                                      className="text-xs flex items-center justify-between"
-                                    >
-                                      <span>{a.fullName}</span>
-                                      {lead.assigned_to === a.userId && (
-                                        <CheckCircle2 className="h-3.5 w-3.5 text-primary" />
-                                      )}
-                                    </DropdownMenuItem>
-                                  ))}
-                                </DropdownMenuContent>
-                              </DropdownMenu>
+                                </div>
+                              )}
                             </TableCell>
 
                             {/* Date */}
@@ -1147,28 +1282,33 @@ export default function LeadsPage() {
                                       Counseling Remarks
                                     </DropdownMenuItem>
 
-                                    <DropdownMenuSeparator />
-
-                                    <DropdownMenuItem
-                                      onClick={() => setLeadToDelete(lead)}
-                                      className="text-xs gap-2 text-destructive focus:bg-destructive/10 focus:text-destructive cursor-pointer"
-                                    >
-                                      <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                                      Delete Lead
-                                    </DropdownMenuItem>
+                                    {isAdminOrOwner && (
+                                      <>
+                                        <DropdownMenuSeparator />
+                                        <DropdownMenuItem
+                                          onClick={() => setLeadToDelete(lead)}
+                                          className="text-xs gap-2 text-destructive focus:bg-destructive/10 focus:text-destructive cursor-pointer"
+                                        >
+                                          <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                                          Delete Lead
+                                        </DropdownMenuItem>
+                                      </>
+                                    )}
                                   </DropdownMenuContent>
                                 </DropdownMenu>
 
-                                {/* Direct Delete Button */}
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() => setLeadToDelete(lead)}
-                                  className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10 cursor-pointer"
-                                  title="Delete Lead"
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </Button>
+                                {/* Direct Delete Button (Admins/Owners Only) */}
+                                {isAdminOrOwner && (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => setLeadToDelete(lead)}
+                                    className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10 cursor-pointer"
+                                    title="Delete Lead"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </Button>
+                                )}
                               </div>
                             </TableCell>
                           </TableRow>
