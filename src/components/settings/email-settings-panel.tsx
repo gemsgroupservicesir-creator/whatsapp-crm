@@ -14,6 +14,9 @@ import {
   ExternalLink,
   Info,
   Flame,
+  Globe,
+  ShieldCheck,
+  RefreshCw,
 } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -33,24 +36,54 @@ interface EmailConfigData {
   isEnvConfigured: boolean;
 }
 
+interface ResendDomain {
+  id: string;
+  name: string;
+  status: string;
+  region: string;
+  capabilities?: {
+    sending?: string;
+    receiving?: string;
+  };
+}
+
 export function EmailSettingsPanel() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [refreshingDomains, setRefreshingDomains] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
 
   const [apiKey, setApiKey] = useState('');
   const [hasExistingKey, setHasExistingKey] = useState(false);
-  const [fromEmail, setFromEmail] = useState('GEMS Admissions <onboarding@resend.dev>');
+  const [fromEmail, setFromEmail] = useState('GEMS Admissions <admissions@gemsgroup.edu.np>');
   const [replyToEmail, setReplyToEmail] = useState('');
   const [autoEmailEnabled, setAutoEmailEnabled] = useState(true);
   const [subjectTemplate, setSubjectTemplate] = useState(
     'Welcome to {{college}} — {{course}} Admissions {{year}}'
   );
   const [isEnvConfigured, setIsEnvConfigured] = useState(false);
+  const [domains, setDomains] = useState<ResendDomain[]>([]);
 
   const [testRecipient, setTestRecipient] = useState('');
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  const fetchDomains = async () => {
+    try {
+      setRefreshingDomains(true);
+      const res = await fetch('/api/email/domains');
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.domains)) {
+          setDomains(data.domains);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch Resend domains:', err);
+    } finally {
+      setRefreshingDomains(false);
+    }
+  };
 
   useEffect(() => {
     async function loadConfig() {
@@ -60,12 +93,13 @@ export function EmailSettingsPanel() {
         if (res.ok) {
           const data: EmailConfigData = await res.json();
           setHasExistingKey(data.hasApiKey);
-          setFromEmail(data.fromEmail || 'GEMS Admissions <onboarding@resend.dev>');
+          setFromEmail(data.fromEmail || 'GEMS Admissions <admissions@gemsgroup.edu.np>');
           setReplyToEmail(data.replyToEmail || '');
           setAutoEmailEnabled(data.autoEmailEnabled);
           setSubjectTemplate(data.subjectTemplate || 'Welcome to {{college}} — {{course}} Admissions {{year}}');
           setIsEnvConfigured(data.isEnvConfigured);
         }
+        await fetchDomains();
       } catch (err) {
         console.error('Failed to load email config:', err);
         toast.error('Failed to load email configuration');
@@ -82,10 +116,10 @@ export function EmailSettingsPanel() {
     try {
       setSaving(true);
       const payload: Record<string, unknown> = {
-        fromEmail,
+        fromEmail: fromEmail.trim(),
         replyToEmail: replyToEmail.trim() || undefined,
         autoEmailEnabled,
-        subjectTemplate,
+        subjectTemplate: subjectTemplate.trim(),
       };
 
       if (apiKey.trim()) {
@@ -106,6 +140,7 @@ export function EmailSettingsPanel() {
       toast.success('Email settings saved successfully');
       setHasExistingKey(true);
       setApiKey(''); // Clear raw key input after saving
+      await fetchDomains();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       toast.error(msg);
@@ -167,6 +202,9 @@ export function EmailSettingsPanel() {
   }
 
   const isConfigured = hasExistingKey || isEnvConfigured;
+  const isUsingResendDev = fromEmail.toLowerCase().includes('@resend.dev');
+  const verifiedDomains = domains.filter((d) => d.status.toLowerCase() === 'verified');
+  const primaryVerifiedDomain = verifiedDomains[0]?.name;
 
   return (
     <div className="space-y-6">
@@ -185,7 +223,7 @@ export function EmailSettingsPanel() {
                 Deliver automated admissions welcome emails and counselor introductions to incoming student leads.
               </CardDescription>
             </div>
-            <div>
+            <div className="flex flex-wrap items-center gap-2">
               {isConfigured ? (
                 <Badge variant="outline" className="gap-1.5 border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-emerald-700 dark:text-emerald-400">
                   <CheckCircle2 className="size-3.5" />
@@ -197,29 +235,69 @@ export function EmailSettingsPanel() {
                   Not Configured
                 </Badge>
               )}
+
+              {verifiedDomains.map((d) => (
+                <Badge
+                  key={d.id}
+                  variant="outline"
+                  className="gap-1.5 border-blue-500/30 bg-blue-500/10 px-3 py-1 text-blue-700 dark:text-blue-300"
+                >
+                  <Globe className="size-3.5" />
+                  {d.name} (Verified)
+                </Badge>
+              ))}
             </div>
           </div>
         </CardHeader>
 
-        <CardContent>
+        <CardContent className="space-y-3">
           <div className="flex items-start gap-3 rounded-lg border border-blue-500/20 bg-blue-500/5 p-3.5 text-xs text-blue-900 dark:text-blue-200">
             <Info className="mt-0.5 size-4 shrink-0 text-blue-600 dark:text-blue-400" />
             <div className="space-y-1">
               <p className="font-medium">Free & Reliable Resend Integration</p>
               <p className="text-muted-foreground">
-                Resend gives 100 free emails per day with high deliverability. Get your free API key at{' '}
+                Resend gives 100 free emails per day with high deliverability. Manage verified domains and API tokens at{' '}
                 <a
-                  href="https://resend.com/api-keys"
+                  href="https://resend.com/domains"
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex items-center gap-1 font-medium text-blue-600 underline hover:text-blue-500 dark:text-blue-400"
                 >
-                  resend.com/api-keys <ExternalLink className="size-3" />
+                  resend.com/domains <ExternalLink className="size-3" />
                 </a>
-                . No credit card required.
+                .
               </p>
             </div>
           </div>
+
+          {/* Sandbox Warning Banner if using @resend.dev */}
+          {isUsingResendDev && (
+            <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-xs text-amber-900 dark:text-amber-200">
+              <AlertCircle className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
+              <div className="space-y-1.5 flex-1">
+                <p className="font-semibold text-amber-800 dark:text-amber-300">
+                  Testing Restriction Active (@resend.dev)
+                </p>
+                <p className="text-amber-700 dark:text-amber-300/90 leading-relaxed">
+                  Your current sender email is set to <code className="rounded bg-amber-200/50 px-1 py-0.5 font-mono dark:bg-amber-900/50">onboarding@resend.dev</code>. In Resend testing mode, emails can ONLY be delivered to your registered email address (<code className="rounded bg-amber-200/50 px-1 py-0.5 font-mono dark:bg-amber-900/50">gemsgroupservices.ir@gmail.com</code>). Student leads will not receive their welcome emails until you use your verified custom domain.
+                </p>
+                {primaryVerifiedDomain && (
+                  <div className="pt-1">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setFromEmail(`GEMS Admissions <admissions@${primaryVerifiedDomain}>`)}
+                      className="h-8 gap-1.5 border-amber-600/40 bg-white text-xs font-semibold text-amber-900 shadow-xs hover:bg-amber-50 dark:bg-slate-900 dark:text-amber-200"
+                    >
+                      <ShieldCheck className="size-3.5 text-emerald-600" />
+                      Switch to Verified Domain: admissions@{primaryVerifiedDomain}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -227,8 +305,23 @@ export function EmailSettingsPanel() {
       <form onSubmit={handleSave} className="space-y-6">
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Credentials & Sender Setup</CardTitle>
-            <CardDescription>Configure your Resend API token and sender identity.</CardDescription>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="text-lg">Credentials & Sender Setup</CardTitle>
+                <CardDescription>Configure your Resend API token and sender identity.</CardDescription>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={fetchDomains}
+                disabled={refreshingDomains}
+                className="gap-1.5 text-xs text-muted-foreground"
+              >
+                <RefreshCw className={`size-3.5 ${refreshingDomains ? 'animate-spin' : ''}`} />
+                Check Domains
+              </Button>
+            </div>
           </CardHeader>
           <CardContent className="space-y-5">
             {/* API Key */}
@@ -266,17 +359,51 @@ export function EmailSettingsPanel() {
             {/* From Email */}
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label htmlFor="from-email">Sender Email Address (&quot;From&quot;)</Label>
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="from-email">Sender Email Address (&quot;From&quot;)</Label>
+                  {primaryVerifiedDomain && fromEmail.includes(primaryVerifiedDomain) && (
+                    <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                      <ShieldCheck className="size-3.5" />
+                      Domain Verified
+                    </span>
+                  )}
+                </div>
                 <Input
                   id="from-email"
-                  placeholder="GEMS Admissions <onboarding@resend.dev>"
+                  placeholder="GEMS Admissions <admissions@gemsgroup.edu.np>"
                   value={fromEmail}
                   onChange={(e) => setFromEmail(e.target.value)}
                   required
                 />
-                <p className="text-xs text-muted-foreground">
-                  Format: <code className="rounded bg-muted px-1 py-0.5">Name &lt;email@domain.com&gt;</code>. Use <code className="rounded bg-muted px-1 py-0.5">onboarding@resend.dev</code> for testing without DNS verification.
-                </p>
+                {verifiedDomains.length > 0 ? (
+                  <div className="space-y-1.5 pt-0.5 text-xs text-muted-foreground">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[11px] text-muted-foreground">Verified Domains:</span>
+                      {verifiedDomains.map((d) => (
+                        <Badge key={d.id} variant="secondary" className="font-mono text-[10px] gap-1 px-1.5 py-0">
+                          ✓ {d.name}
+                        </Badge>
+                      ))}
+                    </div>
+                    <div className="flex flex-wrap gap-2 text-[11px]">
+                      <span className="text-muted-foreground">Quick select:</span>
+                      {verifiedDomains.map((d) => (
+                        <button
+                          key={d.id}
+                          type="button"
+                          onClick={() => setFromEmail(`GEMS Admissions <admissions@${d.name}>`)}
+                          className="font-medium text-blue-600 underline hover:text-blue-500 dark:text-blue-400"
+                        >
+                          Use admissions@{d.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    Format: <code className="rounded bg-muted px-1 py-0.5">Name &lt;email@domain.com&gt;</code>.
+                  </p>
+                )}
               </div>
 
               {/* Reply-To Email */}
@@ -285,12 +412,12 @@ export function EmailSettingsPanel() {
                 <Input
                   id="reply-to-email"
                   type="email"
-                  placeholder="admissions@gems.edu.np"
+                  placeholder="gemsgroupservices.ir@gmail.com"
                   value={replyToEmail}
                   onChange={(e) => setReplyToEmail(e.target.value)}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Where student replies should be delivered. Defaults to the assigned counselor&apos;s email.
+                  Where student replies will be delivered. E.g. <code className="rounded bg-muted px-1 py-0.5">gemsgroupservices.ir@gmail.com</code>
                 </p>
               </div>
             </div>
@@ -363,7 +490,7 @@ export function EmailSettingsPanel() {
             <div className="flex-1">
               <Input
                 type="email"
-                placeholder="Enter recipient email (e.g. your email)"
+                placeholder="Enter recipient email (e.g. your personal email)"
                 value={testRecipient}
                 onChange={(e) => setTestRecipient(e.target.value)}
               />

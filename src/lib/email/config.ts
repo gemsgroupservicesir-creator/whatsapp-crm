@@ -46,7 +46,7 @@ export async function loadEmailConfig(
   const fromEmail =
     storedConfig?.fromEmail ||
     process.env.EMAIL_FROM ||
-    'GEMS Admissions <onboarding@resend.dev>';
+    'GEMS Admissions <admissions@gemsgroup.edu.np>';
 
   const replyToEmail =
     storedConfig?.replyToEmail ||
@@ -101,7 +101,7 @@ export async function saveEmailConfig(
     ...currentOptions,
     provider: 'resend',
     apiKey: config.apiKey !== undefined ? config.apiKey : currentOptions.apiKey,
-    fromEmail: config.fromEmail || currentOptions.fromEmail || 'GEMS Admissions <onboarding@resend.dev>',
+    fromEmail: config.fromEmail || currentOptions.fromEmail || 'GEMS Admissions <admissions@gemsgroup.edu.np>',
     replyToEmail: config.replyToEmail !== undefined ? config.replyToEmail : currentOptions.replyToEmail,
     autoEmailEnabled:
       typeof config.autoEmailEnabled === 'boolean'

@@ -121,7 +121,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const fromEmail = body.fromEmail?.trim() || config?.fromEmail || 'GEMS Admissions <onboarding@resend.dev>';
+    const fromEmail = body.fromEmail?.trim() || config?.fromEmail || 'GEMS Admissions <admissions@gemsgroup.edu.np>';
 
     const testSubject = 'GEMS Education — Resend Email Verification Test';
     const testHtml = `<!DOCTYPE html>

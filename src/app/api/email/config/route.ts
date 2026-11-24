@@ -94,7 +94,7 @@ export async function GET() {
     const configObj = {
       provider: 'resend' as const,
       apiKey: config?.apiKey ? maskApiKey(config.apiKey) : '',
-      fromEmail: config?.fromEmail || 'GEMS Admissions <onboarding@resend.dev>',
+      fromEmail: config?.fromEmail || 'GEMS Admissions <admissions@gemsgroup.edu.np>',
       replyToEmail: config?.replyToEmail || '',
       autoEmailEnabled: config?.autoEmailEnabled ?? false,
       subjectTemplate: config?.subjectTemplate || 'Welcome to {{college}} — {{course}} Admissions {{year}}',
