@@ -5,6 +5,8 @@ import { toErrorResponse } from '@/lib/auth/account';
 import { fetchLeadFromMetaGraphApi, processIncomingLead, syncAllLeadsToPipeline, applyLeadAssignmentRules } from '@/lib/leads/meta-leads';
 import { decrypt } from '@/lib/whatsapp/encryption';
 import { parseLeadNotes, serializeLeadNotes, type LeadNote } from '@/lib/leads/notes';
+import { sendLeadFollowUpEmail } from '@/lib/email/follow-up';
+import { loadEmailConfig } from '@/lib/email/config';
 
 export const dynamic = 'force-dynamic';
 
@@ -434,10 +436,43 @@ export async function PATCH(request: Request) {
         .eq('contact_id', updatedLead.contact_id);
     }
 
+    let followUpEmailResult: { sent: boolean; id?: string; subject?: string } | null = null;
+    const isAddingNewNote = Boolean(body.new_note && typeof body.new_note === 'object' && body.new_note.text);
+
+    if (isAddingNewNote && updatedLead.email && updatedLead.email.includes('@')) {
+      const emailConfig = await loadEmailConfig(admin, profile.account_id);
+      const shouldSend =
+        Boolean(body.send_follow_up_email) ||
+        (Boolean(emailConfig?.autoFollowUpOnNote) && body.send_follow_up_email !== false);
+
+      if (shouldSend) {
+        try {
+          const res = await sendLeadFollowUpEmail({
+            admin,
+            accountId: profile.account_id,
+            leadId: updatedLead.id,
+            currentUserId: user.id,
+            latestNoteText: String(body.new_note.text).trim(),
+            customSubject: body.custom_email_subject,
+          });
+
+          if (res.success && res.emailSent) {
+            followUpEmailResult = { sent: true, id: res.id, subject: res.subject };
+            if (res.updatedNotes) {
+              updatedLead.notes = serializeLeadNotes(res.updatedNotes);
+            }
+          }
+        } catch (emailErr) {
+          console.error('[LeadsRoute] Auto follow-up email dispatch error:', emailErr);
+        }
+      }
+    }
+
     return NextResponse.json({
       success: true,
       lead: updatedLead,
       parsed_notes: parseLeadNotes(updatedLead.notes),
+      follow_up_email: followUpEmailResult,
     });
   } catch (err) {
     return toErrorResponse(err);

@@ -169,7 +169,11 @@ export default function LeadsPage() {
   // Manual Send Email state
   const [emailModalLead, setEmailModalLead] = useState<Lead | null>(null);
   const [emailModalSubject, setEmailModalSubject] = useState("");
+  const [emailModalType, setEmailModalType] = useState<"welcome" | "follow_up">("welcome");
+  const [emailPreviewHtml, setEmailPreviewHtml] = useState<string | null>(null);
+  const [loadingEmailPreview, setLoadingEmailPreview] = useState(false);
   const [sendingEmail, setSendingEmail] = useState(false);
+  const [sendFollowUpEmailOnNote, setSendFollowUpEmailOnNote] = useState(true);
 
   // Assignment Rules state
   const [rules, setRules] = useState<AssignmentRule[]>([]);
@@ -434,6 +438,8 @@ export default function LeadsPage() {
     if (!selectedLead || !newNoteInput.trim()) return;
     try {
       setAddingNote(true);
+      const shouldSendEmail = Boolean(sendFollowUpEmailOnNote && selectedLead.email);
+
       const res = await fetch("/api/leads", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -444,6 +450,7 @@ export default function LeadsPage() {
             author_type: noteAuthorType,
             author_name: noteAuthorType === "ai_agent" ? "AI Admissions Agent" : "Counselor",
           },
+          send_follow_up_email: shouldSendEmail,
         }),
       });
       const data = await res.json();
@@ -458,11 +465,18 @@ export default function LeadsPage() {
         setSelectedLead((prev) => (prev ? { ...prev, notes: data.lead?.notes || prev.notes } : null));
       }
       setNewNoteInput("");
-      toast.success(
-        noteAuthorType === "ai_agent"
-          ? "AI Agent note added! AI will use this in WhatsApp follow-ups."
-          : "Counselor note recorded! AI agent briefed."
-      );
+
+      if (data.follow_up_email?.sent) {
+        toast.success(
+          `Note saved & auto follow-up email sent to ${selectedLead.email}!`
+        );
+      } else {
+        toast.success(
+          noteAuthorType === "ai_agent"
+            ? "AI Agent note added! AI will use this in WhatsApp follow-ups."
+            : "Counselor note recorded! AI agent briefed."
+        );
+      }
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Failed to add note");
     } finally {
@@ -481,18 +495,51 @@ export default function LeadsPage() {
     setNoteAuthorType("ai_agent");
   };
 
-  const handleOpenEmailModal = (lead: Lead) => {
+  const handleOpenEmailModal = async (lead: Lead, type: "welcome" | "follow_up" = "welcome") => {
     setEmailModalLead(lead);
+    setEmailModalType(type);
+    setEmailPreviewHtml(null);
     const course = lead.course || "Higher Education";
     const college = lead.college || "GEMS Education";
-    setEmailModalSubject(`Welcome to ${college} — ${course} Admissions 2027/28`);
+
+    if (type === "follow_up") {
+      setEmailModalSubject(`Follow-up regarding your ${course} Inquiry — ${college}`);
+      try {
+        setLoadingEmailPreview(true);
+        const res = await fetch("/api/email/follow-up-lead", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            leadId: lead.id,
+            accountId: lead.account_id,
+            previewOnly: true,
+          }),
+        });
+        if (res.ok) {
+          const pData = await res.json();
+          if (pData.subject) setEmailModalSubject(pData.subject);
+          if (pData.html) setEmailPreviewHtml(pData.html);
+        }
+      } catch (err) {
+        console.warn("Failed to load email preview:", err);
+      } finally {
+        setLoadingEmailPreview(false);
+      }
+    } else {
+      setEmailModalSubject(`Welcome to ${college} — ${course} Admissions 2027/28`);
+    }
   };
 
   const handleSendLeadEmail = async () => {
     if (!emailModalLead) return;
     try {
       setSendingEmail(true);
-      const res = await fetch("/api/email/send-lead", {
+      const endpoint =
+        emailModalType === "follow_up"
+          ? "/api/email/follow-up-lead"
+          : "/api/email/send-lead";
+
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -507,7 +554,16 @@ export default function LeadsPage() {
         throw new Error(data.error || "Failed to dispatch email");
       }
 
-      toast.success(data.message || `Welcome email sent to ${emailModalLead.email}!`);
+      toast.success(
+        data.message ||
+          (emailModalType === "follow_up"
+            ? `Follow-up email sent to ${emailModalLead.email}!`
+            : `Welcome email sent to ${emailModalLead.email}!`)
+      );
+
+      if (data.parsed_notes) {
+        setCurrentNotesList(data.parsed_notes);
+      }
 
       // Update local lead state so notes and email delivery status reflect immediately
       setLeads((prev) =>
@@ -516,6 +572,7 @@ export default function LeadsPage() {
           const currentRaw = (l.raw_data && typeof l.raw_data === "object") ? l.raw_data : {};
           return {
             ...l,
+            notes: data.parsed_notes ? JSON.stringify(data.parsed_notes) : l.notes,
             raw_data: {
               ...currentRaw,
               email_delivery: {
@@ -529,6 +586,10 @@ export default function LeadsPage() {
           };
         })
       );
+
+      if (selectedLead && selectedLead.id === emailModalLead.id && data.parsed_notes) {
+        setSelectedLead((prev) => (prev ? { ...prev, notes: JSON.stringify(data.parsed_notes) } : null));
+      }
 
       setEmailModalLead(null);
     } catch (err: unknown) {
@@ -1731,8 +1792,31 @@ export default function LeadsPage() {
           <div className="flex items-start gap-2 p-2.5 rounded-lg bg-purple-500/10 border border-purple-500/20 text-xs text-purple-900 dark:text-purple-200">
             <Sparkles className="h-4 w-4 text-purple-600 shrink-0 mt-0.5" />
             <p className="leading-relaxed text-[11px]">
-              <strong>AI Agent Grounding:</strong> Your Gemini AI Agent directly reads all notes recorded here. It uses this knowledge during WhatsApp follow-ups to give personalized, accurate answers without asking repetitive questions.
+              <strong>AI Agent Grounding:</strong> Your Gemini AI Agent directly reads all notes recorded here. It uses this knowledge during WhatsApp follow-ups and automated email dispatches to give personalized, accurate answers without asking repetitive questions.
             </p>
+          </div>
+
+          <div className="flex items-center justify-between pt-1">
+            <span className="text-xs font-semibold text-foreground">
+              Timeline Notes ({currentNotesList.length})
+            </span>
+            {selectedLead?.email && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  if (selectedLead) {
+                    setIsNotesOpen(false);
+                    handleOpenEmailModal(selectedLead, "follow_up");
+                  }
+                }}
+                className="h-7 text-[11px] gap-1.5 border-blue-500/30 text-blue-600 dark:text-blue-400 hover:bg-blue-500/10 cursor-pointer"
+              >
+                <Mail className="h-3.5 w-3.5 text-blue-600" />
+                ✨ Send AI Follow-Up Mail (from Notes)
+              </Button>
+            )}
           </div>
 
           {/* Notes History Feed */}
@@ -1857,6 +1941,24 @@ export default function LeadsPage() {
               rows={3}
               className="text-xs resize-none"
             />
+
+            {selectedLead?.email && (
+              <div className="flex items-center gap-2 pt-0.5">
+                <label className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={sendFollowUpEmailOnNote}
+                    onChange={(e) => setSendFollowUpEmailOnNote(e.target.checked)}
+                    className="rounded border-input text-blue-600 focus:ring-blue-500 h-3.5 w-3.5 cursor-pointer"
+                  />
+                  <span className="flex items-center gap-1 font-medium text-foreground text-[11px]">
+                    <Mail className="h-3 w-3 text-blue-600" />
+                    Auto-send follow-up email to student based on this note
+                  </span>
+                  <span className="text-[10px] text-muted-foreground font-mono">({selectedLead.email})</span>
+                </label>
+              </div>
+            )}
           </div>
 
           <DialogFooter className="flex items-center justify-between sm:justify-between pt-2">
@@ -2162,31 +2264,83 @@ export default function LeadsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Send Admissions Welcome Email Dialog */}
+      {/* Send Admissions Email Dialog */}
       <Dialog open={Boolean(emailModalLead)} onOpenChange={(open) => !open && setEmailModalLead(null)}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Mail className="h-5 w-5 text-blue-600" />
-              Send Admissions Welcome Email
+              {emailModalType === "follow_up"
+                ? "Send AI Follow-Up Email (from Notes)"
+                : "Send Admissions Welcome Email"}
             </DialogTitle>
             <DialogDescription>
-              Deliver a personalized admissions welcome email to{" "}
+              Deliver a personalized admissions email to{" "}
               <strong className="text-foreground">{emailModalLead?.full_name}</strong>.
             </DialogDescription>
           </DialogHeader>
 
           <div className="flex flex-col gap-3 py-2 text-xs">
+            {/* Mode Switcher */}
+            <div className="flex rounded-lg border border-input p-1 bg-muted/40 text-xs">
+              <button
+                type="button"
+                onClick={() => {
+                  if (emailModalLead) handleOpenEmailModal(emailModalLead, "follow_up");
+                }}
+                className={cn(
+                  "flex-1 py-1.5 px-3 rounded-md font-medium text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer",
+                  emailModalType === "follow_up"
+                    ? "bg-background text-foreground shadow-2xs font-semibold"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                <Sparkles className="h-3.5 w-3.5 text-purple-600" />
+                AI Follow-Up Mail (from Notes)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (emailModalLead) handleOpenEmailModal(emailModalLead, "welcome");
+                }}
+                className={cn(
+                  "flex-1 py-1.5 px-3 rounded-md font-medium text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer",
+                  emailModalType === "welcome"
+                    ? "bg-background text-foreground shadow-2xs font-semibold"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                <Mail className="h-3.5 w-3.5 text-blue-600" />
+                Standard Welcome Email
+              </button>
+            </div>
+
             <div className="p-3 rounded-lg bg-blue-500/5 border border-blue-500/20 text-blue-900 dark:text-blue-200">
-              <div className="flex items-center gap-1.5 font-semibold text-blue-700 dark:text-blue-300">
-                <CheckCircle2 className="h-4 w-4" />
-                Verified Recipient Email:
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 font-semibold text-blue-700 dark:text-blue-300">
+                  <CheckCircle2 className="h-4 w-4" />
+                  Recipient: <span className="font-mono text-foreground">{emailModalLead?.email || "No email"}</span>
+                </div>
+                {emailModalType === "follow_up" && (
+                  <Badge className="bg-purple-600 text-white text-[10px] gap-1 px-1.5 py-0">
+                    <Sparkles className="h-3 w-3" />
+                    Notes Grounded
+                  </Badge>
+                )}
               </div>
-              <p className="mt-1 font-mono text-foreground font-semibold text-xs">
-                {emailModalLead?.email || "No email address found"}
-              </p>
               <div className="mt-2 text-[11px] text-muted-foreground leading-relaxed">
-                Includes program details ({emailModalLead?.course || "Program"}), college info ({emailModalLead?.college || "Institution"}), and a direct WhatsApp chat button to the assigned counselor.
+                {emailModalType === "follow_up" ? (
+                  <span>
+                    Directly addresses counseling discussions (
+                    {emailModalLead?.notes ? parseLeadNotes(emailModalLead.notes).length : 0} notes
+                    recorded), answering inquiries on fee structure, scholarships, qualifying criteria, and next steps.
+                  </span>
+                ) : (
+                  <span>
+                    Includes program details ({emailModalLead?.course || "Program"}), college info (
+                    {emailModalLead?.college || "Institution"}), and a direct WhatsApp chat button to the assigned counselor.
+                  </span>
+                )}
               </div>
             </div>
 
@@ -2195,10 +2349,21 @@ export default function LeadsPage() {
               <Input
                 value={emailModalSubject}
                 onChange={(e) => setEmailModalSubject(e.target.value)}
-                placeholder="Welcome to {{college}} — {{course}} Admissions"
+                placeholder={
+                  emailModalType === "follow_up"
+                    ? "Follow-up regarding your course inquiry — GEMS Admissions"
+                    : "Welcome to {{college}} — {{course}} Admissions"
+                }
                 className="h-9 text-xs"
               />
             </div>
+
+            {loadingEmailPreview && (
+              <div className="flex items-center gap-2 p-3 text-xs text-muted-foreground bg-muted/20 rounded-lg">
+                <RefreshCw className="h-3.5 w-3.5 animate-spin text-purple-600" />
+                Generating personalized follow-up from counseling notes...
+              </div>
+            )}
           </div>
 
           <DialogFooter className="gap-2 sm:gap-0 mt-2">
@@ -2214,12 +2379,22 @@ export default function LeadsPage() {
               size="sm"
               onClick={handleSendLeadEmail}
               disabled={sendingEmail}
-              className="gap-1.5 bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
+              className={cn(
+                "gap-1.5 text-white cursor-pointer",
+                emailModalType === "follow_up"
+                  ? "bg-purple-600 hover:bg-purple-700"
+                  : "bg-blue-600 hover:bg-blue-700"
+              )}
             >
               {sendingEmail ? (
                 <>
                   <RefreshCw className="h-3.5 w-3.5 animate-spin" />
                   Sending Email...
+                </>
+              ) : emailModalType === "follow_up" ? (
+                <>
+                  <Sparkles className="h-3.5 w-3.5" />
+                  Dispatch AI Follow-Up Email
                 </>
               ) : (
                 <>

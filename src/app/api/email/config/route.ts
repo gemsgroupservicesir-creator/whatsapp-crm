@@ -97,6 +97,7 @@ export async function GET() {
       fromEmail: config?.fromEmail || 'GEMS Admissions <admissions@gemsgroup.edu.np>',
       replyToEmail: config?.replyToEmail || '',
       autoEmailEnabled: config?.autoEmailEnabled ?? false,
+      autoFollowUpOnNote: config?.autoFollowUpOnNote ?? false,
       subjectTemplate: config?.subjectTemplate || 'Welcome to {{college}} — {{course}} Admissions {{year}}',
       hasApiKey: Boolean(config?.apiKey),
       isEnvConfigured: hasEnvKey,
@@ -219,6 +220,10 @@ export async function POST(request: Request) {
 
     if (typeof body.autoEmailEnabled === 'boolean') {
       updatePayload.autoEmailEnabled = body.autoEmailEnabled;
+    }
+
+    if (typeof body.autoFollowUpOnNote === 'boolean') {
+      updatePayload.autoFollowUpOnNote = body.autoFollowUpOnNote;
     }
 
     if (typeof body.subjectTemplate === 'string') {

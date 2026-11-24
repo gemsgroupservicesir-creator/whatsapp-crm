@@ -31,6 +31,7 @@ interface EmailConfigData {
   fromEmail: string;
   replyToEmail?: string;
   autoEmailEnabled: boolean;
+  autoFollowUpOnNote?: boolean;
   subjectTemplate: string;
   hasApiKey: boolean;
   isEnvConfigured: boolean;
@@ -59,6 +60,7 @@ export function EmailSettingsPanel() {
   const [fromEmail, setFromEmail] = useState('GEMS Admissions <admissions@gemsgroup.edu.np>');
   const [replyToEmail, setReplyToEmail] = useState('');
   const [autoEmailEnabled, setAutoEmailEnabled] = useState(true);
+  const [autoFollowUpOnNote, setAutoFollowUpOnNote] = useState(true);
   const [subjectTemplate, setSubjectTemplate] = useState(
     'Welcome to {{college}} — {{course}} Admissions {{year}}'
   );
@@ -96,6 +98,7 @@ export function EmailSettingsPanel() {
           setFromEmail(data.fromEmail || 'GEMS Admissions <admissions@gemsgroup.edu.np>');
           setReplyToEmail(data.replyToEmail || '');
           setAutoEmailEnabled(data.autoEmailEnabled);
+          setAutoFollowUpOnNote(data.autoFollowUpOnNote ?? true);
           setSubjectTemplate(data.subjectTemplate || 'Welcome to {{college}} — {{course}} Admissions {{year}}');
           setIsEnvConfigured(data.isEnvConfigured);
         }
@@ -119,6 +122,7 @@ export function EmailSettingsPanel() {
         fromEmail: fromEmail.trim(),
         replyToEmail: replyToEmail.trim() || undefined,
         autoEmailEnabled,
+        autoFollowUpOnNote,
         subjectTemplate: subjectTemplate.trim(),
       };
 
@@ -436,6 +440,23 @@ export function EmailSettingsPanel() {
               <Switch
                 checked={autoEmailEnabled}
                 onCheckedChange={setAutoEmailEnabled}
+              />
+            </div>
+
+            {/* Auto Follow-Up on Note Switch */}
+            <div className="flex items-center justify-between rounded-lg border border-purple-500/20 bg-purple-500/5 p-4 dark:border-purple-500/30 dark:bg-purple-950/20">
+              <div className="space-y-0.5">
+                <Label className="text-sm font-semibold flex items-center gap-1.5 text-purple-900 dark:text-purple-200">
+                  <Sparkles className="size-4 text-purple-600 dark:text-purple-400" />
+                  Auto-Send Follow-Up Mail According to Notes
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  When a counselor or AI agent records a note, automatically generate and dispatch an individualized follow-up email to the student tailored strictly to the discussion points and next steps.
+                </p>
+              </div>
+              <Switch
+                checked={autoFollowUpOnNote}
+                onCheckedChange={setAutoFollowUpOnNote}
               />
             </div>
 

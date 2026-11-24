@@ -6,6 +6,7 @@ export interface EmailConfig {
   fromEmail: string;
   replyToEmail?: string;
   autoEmailEnabled: boolean;
+  autoFollowUpOnNote?: boolean;
   subjectTemplate?: string;
 }
 
@@ -58,6 +59,11 @@ export async function loadEmailConfig(
       ? storedConfig.autoEmailEnabled
       : Boolean(process.env.RESEND_API_KEY);
 
+  const autoFollowUpOnNote =
+    typeof storedConfig?.autoFollowUpOnNote === 'boolean'
+      ? storedConfig.autoFollowUpOnNote
+      : false;
+
   const subjectTemplate =
     storedConfig?.subjectTemplate ||
     'Welcome to {{college}} — {{course}} Admissions {{year}}';
@@ -72,6 +78,7 @@ export async function loadEmailConfig(
     fromEmail,
     replyToEmail,
     autoEmailEnabled,
+    autoFollowUpOnNote,
     subjectTemplate,
   };
 }
@@ -107,6 +114,10 @@ export async function saveEmailConfig(
       typeof config.autoEmailEnabled === 'boolean'
         ? config.autoEmailEnabled
         : currentOptions.autoEmailEnabled !== false,
+    autoFollowUpOnNote:
+      typeof config.autoFollowUpOnNote === 'boolean'
+        ? config.autoFollowUpOnNote
+        : Boolean(currentOptions.autoFollowUpOnNote),
     subjectTemplate: config.subjectTemplate || currentOptions.subjectTemplate,
   };
 
