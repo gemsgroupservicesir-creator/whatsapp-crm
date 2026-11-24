@@ -6,7 +6,7 @@ import { sendMessageToConversation } from '@/lib/whatsapp/send-message';
 import { decrypt } from '@/lib/whatsapp/encryption';
 import { loadEmailConfig } from '@/lib/email/config';
 import { sendEmailWithResend, renderLeadWelcomeEmail } from '@/lib/email/resend';
-import { serializeLeadNotes, type LeadNote } from '@/lib/leads/notes';
+import { parseLeadNotes, serializeLeadNotes, type LeadNote } from '@/lib/leads/notes';
 import { getWorkspaceWhatsAppPhone } from '@/lib/whatsapp/wa-phone';
 
 function getAdminClient() {
@@ -713,15 +713,23 @@ export async function processIncomingLead(
     console.warn('[MetaLeads] Auto-assignment failed:', assignErr);
   }
 
-  // 6. Check if auto-WhatsApp follow-up is enabled & configured
+  // 6. Send auto-WhatsApp welcome message using WhatsApp Cloud API number
+  const initialNotes: LeadNote[] = [];
   let whatsappSent = false;
   let whatsappError: string | undefined;
+  let whatsappTemplateUsed: string | undefined;
 
-  // Prioritize rule-specific follow-up template, then global config template, fallback to education_admissions_welcome
-  const templateName =
-    matchedRule?.followup_template_name ||
-    config?.auto_template_name ||
-    'education_admissions_welcome';
+  const candidateTemplates = Array.from(
+    new Set(
+      [
+        matchedRule?.followup_template_name,
+        config?.auto_template_name,
+        'education_admissions_welcome',
+        'admissions_inquiry_received',
+        'education_scholarship_inquiry',
+      ].filter(Boolean) as string[]
+    )
+  );
 
   const shouldSendWhatsApp = Boolean(
     (matchedRule && matchedRule.followup_template_name) ||
@@ -730,30 +738,54 @@ export async function processIncomingLead(
   );
 
   if (shouldSendWhatsApp && conversationId) {
-    try {
-      await sendMessageToConversation(admin, accountId, {
-        conversationId,
-        messageType: 'template',
-        templateName,
-        templateParams: [lead.fullName || 'Student'],
-      });
-      whatsappSent = true;
+    for (const cand of candidateTemplates) {
+      try {
+        await sendMessageToConversation(admin, accountId, {
+          conversationId,
+          messageType: 'template',
+          templateName: cand,
+          templateLanguage: 'en_US',
+          templateParams: [lead.fullName || 'Student'],
+        });
+        whatsappSent = true;
+        whatsappTemplateUsed = cand;
+        break;
+      } catch (sendErr: unknown) {
+        whatsappError = sendErr instanceof Error ? sendErr.message : String(sendErr);
+        console.warn(`[MetaLeads] Auto-reply send failed with template "${cand}":`, sendErr);
+      }
+    }
 
+    const waPhone = await getWorkspaceWhatsAppPhone(admin, accountId);
+
+    if (whatsappSent) {
       // Ensure AI auto-reply is active on this thread for incoming replies
       await admin
         .from('conversations')
         .update({ ai_autoreply_disabled: false })
         .eq('id', conversationId);
-    } catch (sendErr: unknown) {
-      whatsappError = sendErr instanceof Error ? sendErr.message : String(sendErr);
-      console.error('[MetaLeads] Auto-reply send failed:', sendErr);
+
+      initialNotes.push({
+        id: crypto.randomUUID(),
+        text: `💬 Auto-welcome WhatsApp sent from Cloud API number ${waPhone.displayPhone} to ${formattedPhone} using template "${whatsappTemplateUsed}".`,
+        author_name: 'WhatsApp Cloud AI',
+        author_type: 'ai_agent',
+        created_at: new Date().toISOString(),
+      });
+    } else if (whatsappError) {
+      initialNotes.push({
+        id: crypto.randomUUID(),
+        text: `⚠️ Auto-welcome WhatsApp dispatch failed to ${formattedPhone}: ${whatsappError}`,
+        author_name: 'WhatsApp Cloud AI',
+        author_type: 'system',
+        created_at: new Date().toISOString(),
+      });
     }
   }
 
   // 6.5. Auto-send Admissions Welcome Email if lead has email and email config is active
   let emailSent = false;
   let emailDeliveryMeta: Record<string, unknown> | undefined;
-  const initialNotes: LeadNote[] = [];
 
   if (lead.email && lead.email.includes('@')) {
     try {
@@ -901,6 +933,274 @@ export async function processIncomingLead(
     assignedTo,
     whatsappSent,
     emailSent,
+  };
+}
+
+export interface SendLeadWhatsAppOptions {
+  admin: SupabaseClient;
+  accountId: string;
+  leadId: string;
+  preferredTemplateName?: string;
+  templateLanguage?: string;
+  templateParams?: string[];
+  senderUserId?: string;
+}
+
+export interface SendLeadWhatsAppResult {
+  success: boolean;
+  whatsappMessageId?: string;
+  templateUsed?: string;
+  phone?: string;
+  cloudPhoneNumber?: string;
+  error?: string;
+  updatedNotes?: LeadNote[];
+}
+
+/**
+ * Manually sends or retries sending a WhatsApp welcome message to a lead
+ * from the connected WhatsApp Cloud API number.
+ */
+export async function sendLeadWhatsAppMessage(
+  options: SendLeadWhatsAppOptions
+): Promise<SendLeadWhatsAppResult> {
+  const {
+    admin,
+    accountId,
+    leadId,
+    preferredTemplateName,
+    templateLanguage = 'en_US',
+    templateParams,
+    senderUserId,
+  } = options;
+
+  try {
+    const { data: lead, error: leadErr } = await admin
+      .from('meta_lead_logs')
+      .select('*')
+      .eq('id', leadId)
+      .eq('account_id', accountId)
+      .maybeSingle();
+
+    if (leadErr || !lead) {
+      return { success: false, error: 'Lead record not found' };
+    }
+
+    if (!lead.phone || lead.phone === 'Pending Token') {
+      return { success: false, error: 'Lead has no valid phone number' };
+    }
+
+    // 1. Sanitize phone
+    const rawPhone = lead.phone.startsWith('+') ? lead.phone : `+${lead.phone.replace(/\D/g, '')}`;
+    const sanitizedDigits = parseInternationalPhone(rawPhone);
+    const formattedPhone = sanitizedDigits ? `+${sanitizedDigits}` : rawPhone;
+
+    // 2. Resolve or verify conversation
+    let conversationId = lead.conversation_id;
+    let contactId = lead.contact_id;
+
+    if (!conversationId) {
+      const auditUserId = await resolveAuditUserId(admin, accountId);
+      const contact = await findOrCreateContact(admin, accountId, auditUserId, {
+        phone: formattedPhone,
+        name: lead.full_name || 'Lead',
+        email: lead.email || undefined,
+      });
+      contactId = contact.id;
+
+      const conv = await resolveConversationByPhone(admin, accountId, formattedPhone, lead.full_name);
+      conversationId = conv.conversationId;
+
+      await admin
+        .from('meta_lead_logs')
+        .update({
+          contact_id: contactId,
+          conversation_id: conversationId,
+          phone: formattedPhone,
+        })
+        .eq('id', lead.id);
+    }
+
+    // 3. Resolve Cloud API display phone
+    const waPhone = await getWorkspaceWhatsAppPhone(admin, accountId);
+    const cloudDisplayPhone = waPhone.displayPhone;
+
+    // 4. Build candidate templates list
+    const candidates = Array.from(
+      new Set(
+        [
+          preferredTemplateName,
+          'education_admissions_welcome',
+          'admissions_inquiry_received',
+          'education_scholarship_inquiry',
+        ].filter(Boolean) as string[]
+      )
+    );
+
+    let sentSuccess = false;
+    let lastError = '';
+    let chosenTemplate = '';
+    let messageId = '';
+
+    for (const cand of candidates) {
+      try {
+        const res = await sendMessageToConversation(admin, accountId, {
+          conversationId,
+          messageType: 'template',
+          templateName: cand,
+          templateLanguage,
+          templateParams: templateParams || [lead.full_name || 'Student'],
+          senderId: senderUserId || undefined,
+        });
+        sentSuccess = true;
+        chosenTemplate = cand;
+        messageId = res.whatsappMessageId || res.messageId;
+        break;
+      } catch (err: unknown) {
+        lastError = err instanceof Error ? err.message : String(err);
+        console.warn(`[sendLeadWhatsAppMessage] Attempt with template "${cand}" failed:`, lastError);
+      }
+    }
+
+    const currentNotes = parseLeadNotes(lead.notes);
+    const now = new Date().toISOString();
+
+    if (sentSuccess) {
+      // Ensure AI auto-reply is active
+      await admin
+        .from('conversations')
+        .update({ ai_autoreply_disabled: false })
+        .eq('id', conversationId);
+
+      const note: LeadNote = {
+        id: crypto.randomUUID(),
+        text: `💬 WhatsApp welcome template ("${chosenTemplate}") sent from Cloud API number ${cloudDisplayPhone} to ${formattedPhone}.`,
+        author_name: 'WhatsApp Cloud AI',
+        author_type: 'ai_agent',
+        created_at: now,
+      };
+      const updatedNotes = [...currentNotes, note];
+
+      await admin
+        .from('meta_lead_logs')
+        .update({
+          whatsapp_sent: true,
+          ai_followup_status: 'sent',
+          error_message: null,
+          notes: serializeLeadNotes(updatedNotes),
+          updated_at: now,
+        })
+        .eq('id', lead.id);
+
+      return {
+        success: true,
+        whatsappMessageId: messageId,
+        templateUsed: chosenTemplate,
+        phone: formattedPhone,
+        cloudPhoneNumber: cloudDisplayPhone,
+        updatedNotes,
+      };
+    } else {
+      const note: LeadNote = {
+        id: crypto.randomUUID(),
+        text: `⚠️ WhatsApp welcome message failed to ${formattedPhone}: ${lastError}`,
+        author_name: 'WhatsApp Cloud AI',
+        author_type: 'system',
+        created_at: now,
+      };
+      const updatedNotes = [...currentNotes, note];
+
+      await admin
+        .from('meta_lead_logs')
+        .update({
+          whatsapp_sent: false,
+          ai_followup_status: 'failed',
+          error_message: lastError,
+          notes: serializeLeadNotes(updatedNotes),
+          updated_at: now,
+        })
+        .eq('id', lead.id);
+
+      return {
+        success: false,
+        error: lastError,
+        phone: formattedPhone,
+        cloudPhoneNumber: cloudDisplayPhone,
+        updatedNotes,
+      };
+    }
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    return { success: false, error: errorMsg };
+  }
+}
+
+export interface BulkSendWhatsAppResult {
+  totalAttempted: number;
+  sentCount: number;
+  failedCount: number;
+  results: Array<{ leadId: string; phone: string; success: boolean; error?: string }>;
+}
+
+/**
+ * Sends or retries WhatsApp welcome messages in bulk for leads in the workspace.
+ */
+export async function bulkSendLeadWhatsAppMessages(
+  admin: SupabaseClient,
+  accountId: string,
+  options: {
+    onlyFailed?: boolean;
+    limit?: number;
+    preferredTemplateName?: string;
+    senderUserId?: string;
+  } = {}
+): Promise<BulkSendWhatsAppResult> {
+  const { onlyFailed = true, limit = 50, preferredTemplateName, senderUserId } = options;
+
+  let query = admin
+    .from('meta_lead_logs')
+    .select('id, phone, full_name, status')
+    .eq('account_id', accountId)
+    .neq('phone', 'Pending Token')
+    .not('phone', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (onlyFailed) {
+    query = query.eq('whatsapp_sent', false);
+  }
+
+  const { data: leads, error } = await query;
+  if (error || !leads || leads.length === 0) {
+    return { totalAttempted: 0, sentCount: 0, failedCount: 0, results: [] };
+  }
+
+  let sentCount = 0;
+  let failedCount = 0;
+  const results: Array<{ leadId: string; phone: string; success: boolean; error?: string }> = [];
+
+  for (const lead of leads) {
+    const res = await sendLeadWhatsAppMessage({
+      admin,
+      accountId,
+      leadId: lead.id,
+      preferredTemplateName,
+      senderUserId,
+    });
+
+    if (res.success) {
+      sentCount++;
+      results.push({ leadId: lead.id, phone: lead.phone, success: true });
+    } else {
+      failedCount++;
+      results.push({ leadId: lead.id, phone: lead.phone, success: false, error: res.error });
+    }
+  }
+
+  return {
+    totalAttempted: leads.length,
+    sentCount,
+    failedCount,
+    results,
   };
 }
 

@@ -210,6 +210,75 @@ export default function LeadsPage() {
   // Test Simulator state
   const [simulating, setSimulating] = useState(false);
 
+  // WhatsApp welcome dispatch state
+  const [sendingWhatsAppId, setSendingWhatsAppId] = useState<string | null>(null);
+  const [bulkSendingWhatsApp, setBulkSendingWhatsApp] = useState(false);
+
+  const handleSendWhatsApp = async (lead: Lead) => {
+    try {
+      setSendingWhatsAppId(lead.id);
+      const res = await fetch("/api/leads/whatsapp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leadId: lead.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to send WhatsApp message");
+
+      toast.success(
+        `WhatsApp welcome template ("${data.templateUsed || "welcome"}") sent to ${lead.full_name} from Cloud API (${data.cloudPhoneNumber || "+91 89718 71113"})!`
+      );
+      setLeads((prev) =>
+        prev.map((l) =>
+          l.id === lead.id
+            ? {
+                ...l,
+                whatsapp_sent: true,
+                notes: data.updatedNotes ? JSON.stringify(data.updatedNotes) : l.notes,
+              }
+            : l
+        )
+      );
+      if (selectedLead && selectedLead.id === lead.id) {
+        setSelectedLead((prev) =>
+          prev
+            ? {
+                ...prev,
+                whatsapp_sent: true,
+                notes: data.updatedNotes ? JSON.stringify(data.updatedNotes) : prev.notes,
+              }
+            : null
+        );
+      }
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to send WhatsApp message");
+    } finally {
+      setSendingWhatsAppId(null);
+    }
+  };
+
+  const handleBulkSendWhatsApp = async () => {
+    try {
+      setBulkSendingWhatsApp(true);
+      const res = await fetch("/api/leads/whatsapp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bulk: true, onlyFailed: true }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to send bulk WhatsApp messages");
+
+      toast.success(
+        `Sent ${data.sentCount} WhatsApp welcome message${data.sentCount === 1 ? "" : "s"} (${data.failedCount} failed) from Cloud API!`
+      );
+      fetchLeads();
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to bulk send WhatsApp messages");
+    } finally {
+      setBulkSendingWhatsApp(false);
+    }
+  };
+
   const fetchDetectedCampaigns = useCallback(async (showToast = false) => {
     try {
       setDetectingCampaigns(true);
@@ -787,6 +856,24 @@ export default function LeadsPage() {
 
           {isAdminOrOwner && (
             <>
+              {leads.filter((l) => !l.whatsapp_sent && l.phone && l.phone !== "Pending Token").length > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleBulkSendWhatsApp}
+                  disabled={bulkSendingWhatsApp}
+                  className="h-9 gap-1.5 border-emerald-500/40 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 cursor-pointer"
+                  title="Send WhatsApp welcome message to all pending leads using Cloud API (+91 89718 71113)"
+                >
+                  <MessageSquare className={cn("h-4 w-4 text-emerald-500", bulkSendingWhatsApp && "animate-spin")} />
+                  <span>
+                    {bulkSendingWhatsApp
+                      ? "Sending..."
+                      : `Send WA to Pending (${leads.filter((l) => !l.whatsapp_sent && l.phone && l.phone !== "Pending Token").length})`}
+                  </span>
+                </Button>
+              )}
+
               <Button
                 variant="outline"
                 size="sm"
@@ -1363,10 +1450,30 @@ export default function LeadsPage() {
                                       Needs Valid Token to reveal phone
                                     </span>
                                   ) : (
-                                    <span className="flex items-center gap-1">
-                                      <Phone className="h-3 w-3 text-muted-foreground" />
-                                      {lead.phone}
-                                    </span>
+                                    <>
+                                      <span className="flex items-center gap-1">
+                                        <Phone className="h-3 w-3 text-muted-foreground" />
+                                        {lead.phone}
+                                      </span>
+                                      {lead.whatsapp_sent ? (
+                                        <Badge
+                                          variant="outline"
+                                          className="text-[10px] px-1 py-0 border-emerald-500/40 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 gap-0.5 inline-flex items-center"
+                                          title="WhatsApp welcome template delivered from Cloud API (+91 89718 71113)"
+                                        >
+                                          <CheckCircle2 className="h-2.5 w-2.5 text-emerald-500" />
+                                          WA Sent
+                                        </Badge>
+                                      ) : (
+                                        <Badge
+                                          variant="outline"
+                                          className="text-[10px] px-1 py-0 border-muted text-muted-foreground bg-muted/20 gap-0.5 inline-flex items-center"
+                                          title="WhatsApp welcome message not sent yet"
+                                        >
+                                          WA Pending
+                                        </Badge>
+                                      )}
+                                    </>
                                   )}
                                   {lead.email && (
                                     <span
@@ -1600,6 +1707,23 @@ export default function LeadsPage() {
                                   </Link>
                                 )}
 
+                                {/* Send WhatsApp Welcome Message */}
+                                {lead.phone !== "Pending Token" && !lead.whatsapp_sent && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => handleSendWhatsApp(lead)}
+                                    disabled={sendingWhatsAppId === lead.id}
+                                    className="h-8 gap-1 text-xs px-2 cursor-pointer border-emerald-500/40 hover:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                                    title="Send WhatsApp welcome message from Cloud API number (+91 89718 71113)"
+                                  >
+                                    <MessageSquare className={cn("h-3.5 w-3.5 text-emerald-600", sendingWhatsAppId === lead.id && "animate-spin")} />
+                                    <span className="hidden sm:inline">
+                                      {sendingWhatsAppId === lead.id ? "Sending..." : "Send WA"}
+                                    </span>
+                                  </Button>
+                                )}
+
                                 {/* Notes Button */}
                                 <Button
                                   size="sm"
@@ -1658,6 +1782,16 @@ export default function LeadsPage() {
                                       <Bot className="h-3.5 w-3.5 text-purple-600" />
                                       Counselor & AI Notes
                                     </DropdownMenuItem>
+
+                                    {lead.phone !== "Pending Token" && (
+                                      <DropdownMenuItem
+                                        onClick={() => handleSendWhatsApp(lead)}
+                                        className="text-xs gap-2 cursor-pointer text-emerald-600 dark:text-emerald-400 font-medium"
+                                      >
+                                        <MessageSquare className="h-3.5 w-3.5 text-emerald-600" />
+                                        {lead.whatsapp_sent ? "Resend WA Welcome" : "Send WhatsApp Welcome"}
+                                      </DropdownMenuItem>
+                                    )}
 
                                     {lead.email && (
                                       <DropdownMenuItem
@@ -1778,6 +1912,22 @@ export default function LeadsPage() {
               </div>
 
               <div className="flex items-center gap-2">
+                {selectedLead?.phone && selectedLead.phone !== "Pending Token" && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      if (selectedLead) handleSendWhatsApp(selectedLead);
+                    }}
+                    disabled={sendingWhatsAppId === selectedLead?.id}
+                    className="h-8 text-xs gap-1.5 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 cursor-pointer"
+                    title="Send WhatsApp welcome message from Cloud API number (+91 89718 71113)"
+                  >
+                    <MessageSquare className={cn("h-3.5 w-3.5 text-emerald-600", sendingWhatsAppId === selectedLead?.id && "animate-spin")} />
+                    {selectedLead?.whatsapp_sent ? "Resend WA Welcome" : "Send WA Welcome"}
+                  </Button>
+                )}
+
                 {selectedLead?.email && (
                   <Button
                     size="sm"
