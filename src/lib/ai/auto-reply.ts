@@ -19,6 +19,7 @@ import {
   formatNotesForAiContext,
   type LeadNote,
 } from '@/lib/leads/notes'
+import { matchesLeadAssignmentRule } from '@/lib/leads/meta-leads'
 
 interface DispatchArgs {
   /** Tenancy key — drives config, contact, and whatsapp_config lookups. */
@@ -73,7 +74,7 @@ export async function dispatchInboundToAiReply(
     // Check if this conversation belongs to a Meta campaign lead
     const { data: leadLog } = await db
       .from('meta_lead_logs')
-      .select('id, full_name, college, course, city, campaign_name, form_name, assigned_to, ai_chat_enabled, notes')
+      .select('id, full_name, college, course, city, campaign_name, form_name, ad_name, raw_data, assigned_to, ai_chat_enabled, notes')
       .eq('conversation_id', conversationId)
       .order('created_at', { ascending: false })
       .limit(1)
@@ -155,7 +156,7 @@ export async function dispatchInboundToAiReply(
       // Fetch matching campaign rule prompt
       const { data: rules } = await db
         .from('lead_assignment_rules')
-        .select('criteria_type, operator, match_value, ai_campaign_prompt')
+        .select('name, criteria_type, operator, match_value, ai_campaign_prompt')
         .eq('account_id', accountId)
         .eq('is_active', true)
         .order('priority', { ascending: true })
@@ -163,18 +164,17 @@ export async function dispatchInboundToAiReply(
       if (rules) {
         for (const r of rules) {
           if (!r.ai_campaign_prompt) continue
-          let valToTest = ''
-          if (r.criteria_type === 'campaign_name') valToTest = leadLog.campaign_name || ''
-          else if (r.criteria_type === 'college') valToTest = leadLog.college || ''
-          else if (r.criteria_type === 'course') valToTest = leadLog.course || ''
-          else if (r.criteria_type === 'form_name') valToTest = leadLog.form_name || ''
-          else if (r.criteria_type === 'any') {
-            valToTest = `${leadLog.campaign_name || ''} ${leadLog.college || ''} ${leadLog.course || ''} ${leadLog.form_name || ''}`
-          }
-
-          const needle = (r.match_value || '').toLowerCase().trim()
-          const haystack = valToTest.toLowerCase().trim()
-          if (needle && (haystack.includes(needle) || r.criteria_type === 'any')) {
+          if (
+            matchesLeadAssignmentRule(r, {
+              campaignName: leadLog.campaign_name || undefined,
+              formName: leadLog.form_name || undefined,
+              college: leadLog.college || undefined,
+              course: leadLog.course || undefined,
+              adName: leadLog.ad_name || undefined,
+              city: leadLog.city || undefined,
+              rawFields: (leadLog.raw_data as Record<string, any>) || undefined,
+            })
+          ) {
             campaignPrompt = r.ai_campaign_prompt
             break
           }

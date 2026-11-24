@@ -87,4 +87,97 @@ describe('Campaign Lead Assignment & AI matching', () => {
 
     expect(match).toBeNull();
   });
+
+  it('matches when form_name is entered in campaign_name rule (Aarti Nursing case)', async () => {
+    const mockRules = [
+      {
+        id: 'rule-aarti',
+        name: 'Aarti Nursing Counselling',
+        criteria_type: 'campaign_name',
+        operator: 'equals',
+        match_value: 'GEMS_Nursing_India_2027_Lead_Form',
+        assign_to_user_id: 'user-aarti',
+        is_active: true,
+        priority: 1,
+      },
+    ];
+
+    const fakeAdmin = {
+      from: vi.fn().mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              order: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({ data: mockRules, error: null }),
+              }),
+            }),
+          }),
+        }),
+      }),
+    } as unknown as SupabaseClient;
+
+    // Incoming lead has campaignName: "Nursing Aarti Madam" and formName: "GEMS_Nursing_India_2027_Lead_Form"
+    const match = await findMatchingLeadAssignmentRule(fakeAdmin, 'acct-1', {
+      campaignName: 'Nursing Aarti Madam',
+      formName: 'GEMS_Nursing_India_2027_Lead_Form',
+      course: 'B.Sc Nursing',
+      college: 'Bangalore',
+    });
+
+    expect(match).not.toBeNull();
+    expect(match?.name).toBe('Aarti Nursing Counselling');
+    expect(match?.assign_to_user_id).toBe('user-aarti');
+  });
+
+  it('matches multi-term comma-separated keywords and tolerant underscores', async () => {
+    const mockRules = [
+      {
+        id: 'rule-management',
+        name: 'Management Admissions',
+        criteria_type: 'course',
+        operator: 'contains',
+        match_value: 'MBA, BBA, PGDM, Management',
+        assign_to_user_id: 'user-management',
+        is_active: true,
+        priority: 1,
+      },
+      {
+        id: 'rule-nit',
+        name: 'NIT Admissions',
+        criteria_type: 'campaign_name',
+        operator: 'equals',
+        match_value: 'GEMS_NIT_Admissions_2027_28',
+        assign_to_user_id: 'user-nit',
+        is_active: true,
+        priority: 2,
+      },
+    ];
+
+    const fakeAdmin = {
+      from: vi.fn().mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              order: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({ data: mockRules, error: null }),
+              }),
+            }),
+          }),
+        }),
+      }),
+    } as unknown as SupabaseClient;
+
+    // Test 1: BBA matches multi-term course rule
+    const matchBBA = await findMatchingLeadAssignmentRule(fakeAdmin, 'acct-1', {
+      course: 'BBA',
+    });
+    expect(matchBBA?.assign_to_user_id).toBe('user-management');
+
+    // Test 2: Tolerant match on NIT campaign with spaces / suffixes
+    const matchNIT = await findMatchingLeadAssignmentRule(fakeAdmin, 'acct-1', {
+      campaignName: 'GEMS_NIT_Admissions_2027_28_Nepal',
+      formName: 'GEMS_NIT_Engineering_2027_28_Nepal',
+    });
+    expect(matchNIT?.assign_to_user_id).toBe('user-nit');
+  });
 });

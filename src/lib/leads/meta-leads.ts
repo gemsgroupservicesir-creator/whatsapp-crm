@@ -223,18 +223,196 @@ export interface MatchedAssignmentRule {
   ai_campaign_prompt?: string | null;
 }
 
+export interface LeadCriteriaMatchInput {
+  formName?: string;
+  campaignName?: string;
+  college?: string;
+  course?: string;
+  adName?: string;
+  city?: string;
+  rawFields?: Record<string, any>;
+}
+
+/**
+ * Normalizes lead text for fuzzy and robust comparison:
+ * - Lowercase
+ * - Replaces non-alphanumeric punctuation and separators (_, -, /, \) with spaces
+ * - Collapses consecutive spaces
+ * - Trims
+ */
+export function normalizeLeadText(val?: string | null): string {
+  if (!val) return '';
+  return String(val)
+    .toLowerCase()
+    .replace(/[_\-\\\/\.]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Compact alphanumeric representation:
+ * Strips all spaces, punctuation, symbols for delimiter-independent comparison.
+ */
+export function compactLeadText(val?: string | null): string {
+  if (!val) return '';
+  return String(val).toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+/**
+ * Evaluates whether a target string matches a needle based on an operator.
+ * Supports exact, normalized, compact, and tolerant equals matching.
+ */
+export function matchesRuleValue(
+  target: string,
+  needle: string,
+  operator: string = 'contains'
+): boolean {
+  if (!target || !needle) return false;
+
+  const rawTarget = target.toLowerCase().trim();
+  const rawNeedle = needle.toLowerCase().trim();
+  const normTarget = normalizeLeadText(target);
+  const normNeedle = normalizeLeadText(needle);
+  const compTarget = compactLeadText(target);
+  const compNeedle = compactLeadText(needle);
+
+  if (operator === 'equals') {
+    // 1. Direct or normalized or compact equality
+    if (rawTarget === rawNeedle || normTarget === normNeedle || compTarget === compNeedle) {
+      return true;
+    }
+    // 2. Tolerant equality: in Meta Ads, campaigns or forms often carry extra prefixes/suffixes
+    // (e.g. "GEMS_NIT_Admissions_2027_28" vs "GEMS_NIT_Admissions_2027_28_Nepal" or "Mamata MBA" vs "Mamata MBA 2027")
+    if (
+      normNeedle.length >= 4 &&
+      (normTarget.includes(normNeedle) || normNeedle.includes(normTarget))
+    ) {
+      return true;
+    }
+    if (
+      compNeedle.length >= 4 &&
+      (compTarget.includes(compNeedle) || compNeedle.includes(compTarget))
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  if (operator === 'starts_with') {
+    return (
+      rawTarget.startsWith(rawNeedle) ||
+      normTarget.startsWith(normNeedle) ||
+      compTarget.startsWith(compNeedle)
+    );
+  }
+
+  if (operator === 'ends_with') {
+    return (
+      rawTarget.endsWith(rawNeedle) ||
+      normTarget.endsWith(normNeedle) ||
+      compTarget.endsWith(compNeedle)
+    );
+  }
+
+  // Default: 'contains'
+  return (
+    rawTarget.includes(rawNeedle) ||
+    normTarget.includes(normNeedle) ||
+    compTarget.includes(compNeedle)
+  );
+}
+
+/**
+ * Checks if a specific assignment rule matches a lead payload.
+ * Evaluates comma-separated terms, primary fields (with campaign/form cross-check),
+ * and secondary intelligent fallback.
+ */
+export function matchesLeadAssignmentRule(
+  rule: {
+    criteria_type?: string;
+    operator?: string;
+    match_value?: string;
+    name?: string;
+  },
+  lead: LeadCriteriaMatchInput
+): boolean {
+  const matchValue = (rule.match_value || '').trim();
+  if (!matchValue) return false;
+
+  // Split match_value by commas, semicolons, or pipes to support multiple values (e.g. "MBA, BBA, Management")
+  const terms = matchValue
+    .split(/[,|;]/)
+    .map((t) => t.trim())
+    .filter(Boolean);
+
+  if (terms.length === 0) return false;
+
+  const operator = (rule.operator || 'contains').toLowerCase();
+
+  // 1. Determine primary evaluation fields based on criteria_type
+  let primaryFields: string[] = [];
+  if (rule.criteria_type === 'campaign_name') {
+    // Primary: campaignName. Fallbacks: formName and adName (often mixed up in Meta ads)
+    primaryFields = [lead.campaignName, lead.formName, lead.adName].filter(Boolean) as string[];
+  } else if (rule.criteria_type === 'form_name') {
+    primaryFields = [lead.formName, lead.campaignName, lead.adName].filter(Boolean) as string[];
+  } else if (rule.criteria_type === 'course') {
+    primaryFields = [lead.course, lead.formName, lead.campaignName].filter(Boolean) as string[];
+  } else if (rule.criteria_type === 'college') {
+    primaryFields = [lead.college, lead.formName, lead.campaignName].filter(Boolean) as string[];
+  } else {
+    // 'any'
+    primaryFields = [
+      lead.campaignName,
+      lead.formName,
+      lead.college,
+      lead.course,
+      lead.adName,
+      lead.city,
+    ].filter(Boolean) as string[];
+  }
+
+  // Check primary fields
+  for (const field of primaryFields) {
+    for (const term of terms) {
+      if (matchesRuleValue(field, term, operator)) {
+        return true;
+      }
+    }
+  }
+
+  // 2. Intelligent cross-field fallback:
+  // If primary check didn't match, search across all lead textual signals
+  const allLeadText = [
+    lead.campaignName,
+    lead.formName,
+    lead.college,
+    lead.course,
+    lead.adName,
+    lead.city,
+    ...Object.values(lead.rawFields || {}).map((v) => (typeof v === 'string' ? v : '')),
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  if (allLeadText) {
+    for (const term of terms) {
+      if (matchesRuleValue(allLeadText, term, 'contains')) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 /**
  * Finds the matching active lead assignment rule for a lead payload, including campaign AI follow-up config.
  */
 export async function findMatchingLeadAssignmentRule(
   admin: SupabaseClient,
   accountId: string,
-  lead: {
-    formName?: string;
-    campaignName?: string;
-    college?: string;
-    course?: string;
-  }
+  lead: LeadCriteriaMatchInput
 ): Promise<MatchedAssignmentRule | null> {
   try {
     const { data: rules } = await admin
@@ -248,42 +426,8 @@ export async function findMatchingLeadAssignmentRule(
     if (!rules || rules.length === 0) return null;
 
     for (const rule of rules) {
-      let targetText = '';
-      if (rule.criteria_type === 'college') {
-        targetText = lead.college || '';
-      } else if (rule.criteria_type === 'course') {
-        targetText = lead.course || '';
-      } else if (rule.criteria_type === 'form_name') {
-        targetText = lead.formName || '';
-      } else if (rule.criteria_type === 'campaign_name') {
-        targetText = lead.campaignName || '';
-      } else if (rule.criteria_type === 'any') {
-        targetText = `${lead.campaignName || ''} ${lead.formName || ''} ${lead.college || ''} ${lead.course || ''}`;
-      }
-
-      const needle = (rule.match_value || '').trim().toLowerCase();
-      const haystack = targetText.trim().toLowerCase();
-
-      if (!needle || !haystack) continue;
-
-      let matched = false;
-      switch (rule.operator) {
-        case 'equals':
-          matched = haystack === needle;
-          break;
-        case 'starts_with':
-          matched = haystack.startsWith(needle);
-          break;
-        case 'ends_with':
-          matched = haystack.endsWith(needle);
-          break;
-        case 'contains':
-        default:
-          matched = haystack.includes(needle);
-          break;
-      }
-
-      if (matched && rule.assign_to_user_id) {
+      if (!rule.assign_to_user_id) continue;
+      if (matchesLeadAssignmentRule(rule, lead)) {
         return {
           id: rule.id,
           name: rule.name,
@@ -304,12 +448,7 @@ export async function findMatchingLeadAssignmentRule(
 export async function matchLeadAssignmentRule(
   admin: SupabaseClient,
   accountId: string,
-  lead: {
-    formName?: string;
-    campaignName?: string;
-    college?: string;
-    course?: string;
-  }
+  lead: LeadCriteriaMatchInput
 ): Promise<string | null> {
   const match = await findMatchingLeadAssignmentRule(admin, accountId, lead);
   return match?.assign_to_user_id || null;
@@ -340,7 +479,7 @@ export async function applyLeadAssignmentRules(
 
     let query = admin
       .from('meta_lead_logs')
-      .select('id, full_name, form_name, campaign_name, college, course, conversation_id, contact_id, assigned_to')
+      .select('id, full_name, phone, email, form_name, campaign_name, ad_name, college, course, city, raw_data, conversation_id, contact_id, assigned_to, assigned_at')
       .eq('account_id', accountId);
 
     if (onlyUnassigned) {
@@ -367,12 +506,17 @@ export async function applyLeadAssignmentRules(
       const matchedRule = await findMatchingLeadAssignmentRule(admin, accountId, {
         formName: lead.form_name || undefined,
         campaignName: lead.campaign_name || undefined,
+        adName: lead.ad_name || undefined,
         college: lead.college || undefined,
         course: lead.course || undefined,
+        city: lead.city || undefined,
+        rawFields: (lead.raw_data as Record<string, any>) || undefined,
       });
 
       if (matchedRule?.assign_to_user_id) {
-        assignedCount++;
+        if (!lead.assigned_to || lead.assigned_to !== matchedRule.assign_to_user_id) {
+          assignedCount++;
+        }
         matchedLeads.push({ id: lead.id, name: lead.full_name, assignedTo: matchedRule.assign_to_user_id });
 
         const now = new Date().toISOString();
@@ -382,7 +526,7 @@ export async function applyLeadAssignmentRules(
           .from('meta_lead_logs')
           .update({
             assigned_to: matchedRule.assign_to_user_id,
-            assigned_at: now,
+            assigned_at: lead.assigned_to === matchedRule.assign_to_user_id && lead.assigned_at ? lead.assigned_at : now,
             ai_chat_enabled: matchedRule.ai_auto_chat_enabled,
             updated_at: now,
           })
@@ -399,14 +543,36 @@ export async function applyLeadAssignmentRules(
             .eq('id', lead.conversation_id);
         }
 
-        // 3. Update pipeline deal if exists
+        // 3. Update or create pipeline deal
         if (lead.contact_id) {
           const profileId = userToProfileMap.get(matchedRule.assign_to_user_id);
           if (profileId) {
-            await admin
+            const { data: existingDeal } = await admin
               .from('deals')
-              .update({ assigned_to: profileId, updated_at: now })
-              .eq('contact_id', lead.contact_id);
+              .select('id')
+              .eq('account_id', accountId)
+              .eq('contact_id', lead.contact_id)
+              .maybeSingle();
+
+            if (existingDeal) {
+              await admin
+                .from('deals')
+                .update({ assigned_to: profileId, updated_at: now })
+                .eq('id', existingDeal.id);
+            } else {
+              await syncLeadToPipelineDeal(admin, accountId, {
+                contactId: lead.contact_id,
+                conversationId: lead.conversation_id,
+                fullName: lead.full_name,
+                phone: lead.phone || '',
+                email: lead.email || undefined,
+                college: lead.college,
+                course: lead.course,
+                city: lead.city,
+                formName: lead.form_name,
+                assignedUserId: matchedRule.assign_to_user_id,
+              });
+            }
           }
         }
       }
@@ -527,6 +693,9 @@ export async function processIncomingLead(
       campaignName: lead.campaignName,
       college: lead.college,
       course: lead.course,
+      adName: lead.adName,
+      city: lead.city,
+      rawFields: lead.rawFields,
     });
     if (matchedRule?.assign_to_user_id) {
       assignedTo = matchedRule.assign_to_user_id;
@@ -1435,6 +1604,7 @@ export async function handleWhatsAppAdReferral(
     const matchedRule = await findMatchingLeadAssignmentRule(admin, accountId, {
       campaignName: detectedCampaign,
       formName: 'Click-to-WhatsApp Ad',
+      adName: adName,
     });
 
     const assignedTo = matchedRule?.assign_to_user_id || undefined;

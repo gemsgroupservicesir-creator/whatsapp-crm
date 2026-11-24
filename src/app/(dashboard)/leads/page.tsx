@@ -253,13 +253,13 @@ export default function LeadsPage() {
     }
   };
 
-  const handleApplyRules = async () => {
+  const handleApplyRules = async (onlyUnassigned = true) => {
     try {
       setApplyingRules(true);
       const res = await fetch("/api/leads/rules", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "apply" }),
+        body: JSON.stringify({ action: "apply", onlyUnassigned }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to run auto-assignment");
@@ -790,7 +790,7 @@ export default function LeadsPage() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={handleApplyRules}
+                onClick={() => handleApplyRules(true)}
                 disabled={applyingRules}
                 className="h-9 gap-1.5 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 cursor-pointer"
                 title="Run active auto-assignment rules on all unassigned leads"
@@ -1054,12 +1054,24 @@ export default function LeadsPage() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={handleApplyRules}
+                  onClick={() => handleApplyRules(true)}
                   disabled={applyingRules}
                   className="gap-1.5 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 cursor-pointer"
+                  title="Run assignment rules across all currently unassigned leads"
                 >
                   <SlidersHorizontal className={cn("h-4 w-4 text-emerald-500", applyingRules && "animate-spin")} />
-                  {applyingRules ? "Applying Rules..." : "Apply to Unassigned Leads"}
+                  {applyingRules ? "Applying..." : "Apply to Unassigned"}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleApplyRules(false)}
+                  disabled={applyingRules}
+                  className="gap-1.5 text-xs cursor-pointer border-border hover:bg-muted"
+                  title="Re-evaluate and re-assign all leads across the workspace according to active rules"
+                >
+                  <RefreshCw className={cn("h-3.5 w-3.5", applyingRules && "animate-spin")} />
+                  Re-evaluate All
                 </Button>
                 <Button onClick={() => setIsNewRuleOpen(true)} size="sm" className="gap-1.5">
                   <Plus className="h-4 w-4" />
@@ -2078,11 +2090,11 @@ export default function LeadsPage() {
                   onChange={(e) => setCriteriaType(e.target.value as any)}
                   className="h-9 px-3 rounded-md border border-input bg-background text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                 >
-                  <option value="college">College Name</option>
-                  <option value="course">Course Name</option>
-                  <option value="campaign_name">Campaign Name</option>
+                  <option value="campaign_name">Campaign / Form (Meta Ads)</option>
                   <option value="form_name">Form Name</option>
-                  <option value="any">Any Field</option>
+                  <option value="course">Course / Degree</option>
+                  <option value="college">College / University</option>
+                  <option value="any">Any Field (Universal Match)</option>
                 </select>
               </div>
 
@@ -2093,8 +2105,8 @@ export default function LeadsPage() {
                   onChange={(e) => setOperator(e.target.value as any)}
                   className="h-9 px-3 rounded-md border border-input bg-background text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                 >
-                  <option value="contains">Contains</option>
-                  <option value="equals">Equals</option>
+                  <option value="contains">Contains (Recommended)</option>
+                  <option value="equals">Equals (Exact)</option>
                   <option value="starts_with">Starts With</option>
                   <option value="ends_with">Ends With</option>
                 </select>
@@ -2104,7 +2116,7 @@ export default function LeadsPage() {
             <div className="flex flex-col gap-1">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-medium">
-                  {criteriaType === "campaign_name" ? "Campaign Name" : "Match Text (Keywords)"}
+                  {criteriaType === "campaign_name" ? "Campaign Name / Keyword" : "Match Text (Keywords)"}
                 </label>
                 {criteriaType === "campaign_name" && (
                   <Button
@@ -2137,7 +2149,7 @@ export default function LeadsPage() {
                           if (!ruleName || ruleName.includes("Auto-Assign") || ruleName.includes("Campaign")) {
                             setRuleName(`${c.name} Auto-Assign`);
                           }
-                          setOperator("equals");
+                          setOperator("contains");
                         }}
                         className={cn(
                           "px-2 py-1 rounded text-[11px] font-medium border transition-colors flex items-center gap-1 cursor-pointer",
@@ -2168,8 +2180,8 @@ export default function LeadsPage() {
               <Input
                 placeholder={
                   criteriaType === "campaign_name"
-                    ? "e.g. GEMS_NIT_Admissions_2027_28"
-                    : "e.g. Amity, MBA, B.Tech, or Engineering"
+                    ? "e.g. GEMS_NIT, Nursing, MBA (or comma-separated: MBA, BBA)"
+                    : "e.g. Amity, MBA, B.Tech, Nursing, or comma-separated"
                 }
                 value={matchValue}
                 onChange={(e) => setMatchValue(e.target.value)}
@@ -2184,7 +2196,7 @@ export default function LeadsPage() {
                 </datalist>
               )}
               <span className="text-[11px] text-muted-foreground">
-                Matches case-insensitively when a lead form includes this keyword.
+                Matches case-insensitively with smart fuzzy matching. Supports multiple comma-separated keywords (e.g. &quot;MBA, BBA&quot;).
               </span>
             </div>
 
