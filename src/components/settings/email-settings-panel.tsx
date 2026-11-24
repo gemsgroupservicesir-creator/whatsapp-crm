@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 import {
   Mail,
@@ -17,6 +18,7 @@ import {
   Globe,
   ShieldCheck,
   RefreshCw,
+  LayoutTemplate,
 } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -24,6 +26,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
+import { cn } from '@/lib/utils';
+import { EmailTemplatesCreator } from '@/components/settings/email-templates-creator';
 
 interface EmailConfigData {
   provider: 'resend';
@@ -49,6 +53,15 @@ interface ResendDomain {
 }
 
 export function EmailSettingsPanel() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const isTemplatesQuery =
+    searchParams.get('tab') === 'email-templates' ||
+    searchParams.get('view') === 'templates';
+  const [activeTab, setActiveTab] = useState<'delivery' | 'templates'>(
+    isTemplatesQuery ? 'templates' : 'delivery'
+  );
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -69,6 +82,12 @@ export function EmailSettingsPanel() {
 
   const [testRecipient, setTestRecipient] = useState('');
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  useEffect(() => {
+    if (isTemplatesQuery) {
+      setActiveTab('templates');
+    }
+  }, [isTemplatesQuery]);
 
   const fetchDomains = async () => {
     try {
@@ -305,7 +324,57 @@ export function EmailSettingsPanel() {
         </CardContent>
       </Card>
 
-      {/* Main Settings Form */}
+      {/* Sub-Tabs: Delivery & Credentials vs Email Templates Creator */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-border pb-3">
+        <button
+          type="button"
+          onClick={() => {
+            setActiveTab('delivery');
+            const params = new URLSearchParams(searchParams.toString());
+            params.set('tab', 'email');
+            params.delete('view');
+            router.replace(`/settings?${params.toString()}`, { scroll: false });
+          }}
+          className={cn(
+            'flex items-center gap-2 rounded-lg px-4 py-2 text-xs sm:text-sm font-semibold transition-all cursor-pointer',
+            activeTab === 'delivery'
+              ? 'bg-primary text-primary-foreground shadow-xs'
+              : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
+          )}
+        >
+          <Mail className="size-4" />
+          <span>Delivery & Sender Setup</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setActiveTab('templates');
+            const params = new URLSearchParams(searchParams.toString());
+            params.set('tab', 'email');
+            params.set('view', 'templates');
+            router.replace(`/settings?${params.toString()}`, { scroll: false });
+          }}
+          className={cn(
+            'flex items-center gap-2 rounded-lg px-4 py-2 text-xs sm:text-sm font-semibold transition-all cursor-pointer',
+            activeTab === 'templates'
+              ? 'bg-primary text-primary-foreground shadow-xs'
+              : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
+          )}
+        >
+          <LayoutTemplate className="size-4 text-purple-500" />
+          <span>Email Templates Creator</span>
+          <Badge className="ml-1 bg-purple-500/15 text-purple-700 dark:text-purple-300 text-[10px] font-bold py-0 px-1.5 border border-purple-500/30">
+            <Sparkles className="size-2.5 mr-0.5 inline text-purple-600 dark:text-purple-400" /> AI Drafter
+          </Badge>
+        </button>
+      </div>
+
+      {activeTab === 'templates' ? (
+        <EmailTemplatesCreator />
+      ) : (
+        <>
+          {/* Main Settings Form */}
       <form onSubmit={handleSave} className="space-y-6">
         <Card>
           <CardHeader>
@@ -628,6 +697,8 @@ export function EmailSettingsPanel() {
           </div>
         </CardContent>
       </Card>
+        </>
+      )}
     </div>
   );
 }

@@ -33,6 +33,7 @@ import {
   Bot,
   Check,
   Share2,
+  LayoutTemplate,
 } from "lucide-react";
 import { parseLeadNotes, type LeadNote } from "@/lib/leads/notes";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -174,6 +175,9 @@ export default function LeadsPage() {
   const [loadingEmailPreview, setLoadingEmailPreview] = useState(false);
   const [sendingEmail, setSendingEmail] = useState(false);
   const [sendFollowUpEmailOnNote, setSendFollowUpEmailOnNote] = useState(true);
+  const [emailTemplates, setEmailTemplates] = useState<Array<{ id: string; name: string; category: string; subject: string; bodyHtml: string; bodyText?: string }>>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
+  const [loadingEmailTemplates, setLoadingEmailTemplates] = useState(false);
 
   // Assignment Rules state
   const [rules, setRules] = useState<AssignmentRule[]>([]);
@@ -502,7 +506,29 @@ export default function LeadsPage() {
     const course = lead.course || "Higher Education";
     const college = lead.college || "GEMS Education";
 
+    // Load templates if not yet cached
+    let currentTemplates = emailTemplates;
+    if (currentTemplates.length === 0) {
+      try {
+        setLoadingEmailTemplates(true);
+        const res = await fetch("/api/email/templates");
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data.templates) && data.templates.length > 0) {
+            setEmailTemplates(data.templates);
+            currentTemplates = data.templates;
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to load templates:", err);
+      } finally {
+        setLoadingEmailTemplates(false);
+      }
+    }
+
     if (type === "follow_up") {
+      const followUpTmpl = currentTemplates.find((t) => t.category === "follow_up") || currentTemplates[0];
+      if (followUpTmpl) setSelectedTemplateId(followUpTmpl.id);
       setEmailModalSubject(`Follow-up regarding your ${course} Inquiry — ${college}`);
       try {
         setLoadingEmailPreview(true);
@@ -526,8 +552,37 @@ export default function LeadsPage() {
         setLoadingEmailPreview(false);
       }
     } else {
-      setEmailModalSubject(`Welcome to ${college} — ${course} Admissions 2027/28`);
+      const welcomeTmpl = currentTemplates.find((t) => t.category === "welcome") || currentTemplates[0];
+      if (welcomeTmpl) {
+        setSelectedTemplateId(welcomeTmpl.id);
+        const interpSub = welcomeTmpl.subject
+          .replace(/\{\{course\}\}/gi, course)
+          .replace(/\{\{college\}\}/gi, college)
+          .replace(/\{\{name\}\}/gi, lead.full_name)
+          .replace(/\{\{year\}\}/gi, "2027/28");
+        setEmailModalSubject(interpSub);
+      } else {
+        setEmailModalSubject(`Welcome to ${college} — ${course} Admissions 2027/28`);
+      }
     }
+  };
+
+  const handleSelectTemplate = (templateId: string) => {
+    setSelectedTemplateId(templateId);
+    const chosen = emailTemplates.find((t) => t.id === templateId);
+    if (!chosen || !emailModalLead) return;
+
+    const course = emailModalLead.course || "Higher Education";
+    const college = emailModalLead.college || "GEMS Education";
+    const name = emailModalLead.full_name;
+
+    const interpSub = chosen.subject
+      .replace(/\{\{course\}\}/gi, course)
+      .replace(/\{\{college\}\}/gi, college)
+      .replace(/\{\{name\}\}/gi, name)
+      .replace(/\{\{year\}\}/gi, "2027/28");
+
+    setEmailModalSubject(interpSub);
   };
 
   const handleSendLeadEmail = async () => {
@@ -546,6 +601,7 @@ export default function LeadsPage() {
           leadId: emailModalLead.id,
           accountId: emailModalLead.account_id,
           customSubject: emailModalSubject.trim() || undefined,
+          templateId: selectedTemplateId || undefined,
         }),
       });
 
@@ -2342,6 +2398,40 @@ export default function LeadsPage() {
                   </span>
                 )}
               </div>
+            </div>
+
+            {/* Template Selector */}
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between">
+                <label className="font-medium text-foreground flex items-center gap-1.5">
+                  <LayoutTemplate className="h-3.5 w-3.5 text-primary" />
+                  Email Template
+                </label>
+                <Link
+                  href="/settings?tab=email&view=templates"
+                  target="_blank"
+                  className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1 font-medium"
+                >
+                  Manage Templates <ExternalLink className="h-2.5 w-2.5" />
+                </Link>
+              </div>
+
+              <select
+                value={selectedTemplateId}
+                onChange={(e) => handleSelectTemplate(e.target.value)}
+                disabled={loadingEmailTemplates}
+                className="h-9 px-3 rounded-md border border-input bg-background text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring cursor-pointer"
+              >
+                {emailTemplates.length === 0 ? (
+                  <option value="">Default Admissions Welcome Template</option>
+                ) : (
+                  emailTemplates.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name} ({t.category.toUpperCase()})
+                    </option>
+                  ))
+                )}
+              </select>
             </div>
 
             <div className="flex flex-col gap-1.5">

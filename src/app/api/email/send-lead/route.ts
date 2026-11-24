@@ -4,6 +4,7 @@ import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { toErrorResponse } from '@/lib/auth/account';
 import { loadEmailConfig } from '@/lib/email/config';
 import { sendEmailWithResend, renderLeadWelcomeEmail } from '@/lib/email/resend';
+import { loadEmailTemplates, interpolateEmailTemplate } from '@/lib/email/templates';
 import { parseLeadNotes, serializeLeadNotes, type LeadNote } from '@/lib/leads/notes';
 
 export const dynamic = 'force-dynamic';
@@ -147,8 +148,18 @@ export async function POST(request: Request) {
       }
     }
 
-    const rendered = renderLeadWelcomeEmail(
-      {
+    let renderedSubject: string;
+    let renderedHtml: string;
+    let renderedText: string;
+
+    if (body.customHtml) {
+      renderedSubject = body.customSubject || 'Admissions Update';
+      renderedHtml = body.customHtml;
+      renderedText = body.customText || body.customHtml.replace(/<[^>]+>/g, ' ');
+    } else if (body.templateId) {
+      const templates = await loadEmailTemplates(admin, effectiveAccountId);
+      const chosen = templates.find((t) => t.id === body.templateId) || templates[0];
+      const interp = interpolateEmailTemplate(chosen, {
         fullName: lead.full_name,
         email: lead.email,
         phone: lead.phone,
@@ -159,17 +170,39 @@ export async function POST(request: Request) {
         counselorName,
         counselorPhone,
         counselorEmail,
-      },
-      body.customSubject || emailConfig.subjectTemplate
-    );
+        notes: typeof lead.notes === 'string' ? lead.notes : undefined,
+      });
+      renderedSubject = body.customSubject || interp.subject;
+      renderedHtml = interp.html;
+      renderedText = interp.text;
+    } else {
+      const rendered = renderLeadWelcomeEmail(
+        {
+          fullName: lead.full_name,
+          email: lead.email,
+          phone: lead.phone,
+          college: lead.college,
+          course: lead.course,
+          city: lead.city,
+          campaignName: lead.campaign_name,
+          counselorName,
+          counselorPhone,
+          counselorEmail,
+        },
+        body.customSubject || emailConfig.subjectTemplate
+      );
+      renderedSubject = rendered.subject;
+      renderedHtml = rendered.html;
+      renderedText = rendered.text;
+    }
 
     const result = await sendEmailWithResend({
       apiKey: emailConfig.apiKey,
       from: emailConfig.fromEmail,
       to: lead.email,
-      subject: rendered.subject,
-      html: rendered.html,
-      text: rendered.text,
+      subject: renderedSubject,
+      html: renderedHtml,
+      text: renderedText,
       replyTo: emailConfig.replyToEmail || counselorEmail,
     });
 
@@ -184,7 +217,7 @@ export async function POST(request: Request) {
     const existingNotes = parseLeadNotes(lead.notes);
     const newNote: LeadNote = {
       id: crypto.randomUUID(),
-      text: `📧 Welcome email sent to ${lead.email} (${rendered.subject}) by ${profile?.full_name || 'Counselor'}.`,
+      text: `📧 Email sent to ${lead.email} (${renderedSubject}) by ${profile?.full_name || 'Counselor'}.`,
       author_name: profile?.full_name || 'Counselor',
       author_type: 'counselor',
       created_at: new Date().toISOString(),
@@ -198,7 +231,7 @@ export async function POST(request: Request) {
         sent_at: new Date().toISOString(),
         message_id: result.id,
         to: lead.email,
-        subject: rendered.subject,
+        subject: renderedSubject,
       },
     };
 
@@ -215,8 +248,8 @@ export async function POST(request: Request) {
       success: true,
       id: result.id,
       recipient: lead.email,
-      subject: rendered.subject,
-      message: `Welcome email successfully delivered to ${lead.email}!`,
+      subject: renderedSubject,
+      message: `Email successfully delivered to ${lead.email}!`,
     });
   } catch (err) {
     return toErrorResponse(err);

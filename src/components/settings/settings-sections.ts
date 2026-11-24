@@ -92,7 +92,7 @@ function isSection(value: string | null): value is SettingsSection {
  */
 export function resolveSection(raw: string | null): SettingsSection {
   if (raw === 'tags' || raw === 'custom-fields') return 'fields';
-  if (raw === 'email' || raw === 'emails' || raw === 'resend') return 'email';
+  if (raw === 'email' || raw === 'emails' || raw === 'resend' || raw === 'email-templates') return 'email';
   if (isSection(raw)) return raw;
   return DEFAULT_SECTION;
 }
