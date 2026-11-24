@@ -28,7 +28,7 @@ describe('Follow-Up Email Engine (Grounded in Notes)', () => {
     course: 'B.Tech Computer Science',
     city: 'Kathmandu',
     counselorName: 'Senior Advisor Prakash',
-    counselorPhone: '+977 980-0000000',
+    counselorPhone: '+91 89718 71113',
     counselorEmail: 'admissions@gemsgroup.edu.np',
     notes: sampleNotes,
   };
@@ -42,7 +42,7 @@ describe('Follow-Up Email Engine (Grounded in Notes)', () => {
     expect(result.html).toContain('Senior Advisor Prakash');
     expect(result.html).toContain('Scored 84% in Class 12 PCM');
     expect(result.html).toContain('hostel accommodation details');
-    expect(result.html).toContain('wa.me/9779800000000');
+    expect(result.html).toContain('wa.me/918971871113');
     expect(result.text).toContain('Aarav Sharma');
     expect(result.text).toContain('B.Tech Computer Science');
   });

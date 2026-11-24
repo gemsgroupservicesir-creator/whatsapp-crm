@@ -566,13 +566,16 @@ export function interpolateEmailTemplate(
   const city = (context.city || 'Nepal / India').trim();
   const campaign = (context.campaignName || 'Admissions Enquiry').trim();
   const counselor = (context.counselorName || 'Senior Admissions Counselor').trim();
-  const counselorPhone = (context.counselorPhone || '+977 980-0000000').trim();
   const counselorEmail = (context.counselorEmail || 'admissions@gemsgroup.edu.np').trim();
   const year = (context.year || '2027/28').trim();
   const notes = (context.notes || 'Counseling review underway. Discussed admission requirements and curriculum.').trim();
 
-  const cleanPhone = counselorPhone.replace(/[^0-9+]/g, '');
-  const waLink = `https://wa.me/${cleanPhone.replace('+', '')}?text=${encodeURIComponent(
+  let counselorPhone = (context.counselorPhone || '+91 89718 71113').trim();
+  if (!counselorPhone || counselorPhone.includes('000000') || counselorPhone.includes('980-0000')) {
+    counselorPhone = '+91 89718 71113';
+  }
+  const cleanPhone = counselorPhone.replace(/[^0-9]/g, '');
+  const waLink = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(
     `Hello ${counselor}, I am following up on my enquiry for ${course} at ${college}.`
   )}`;
 

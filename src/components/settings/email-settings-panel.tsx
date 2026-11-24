@@ -684,7 +684,7 @@ export function EmailSettingsPanel() {
                   </p>
                   <div className="mt-2.5">
                     <span className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-xs">
-                      💬 Chat on WhatsApp (+977 980-0000000)
+                      💬 Chat on WhatsApp (+91 89718 71113)
                     </span>
                   </div>
                 </div>

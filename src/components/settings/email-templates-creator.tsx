@@ -87,7 +87,7 @@ const SAMPLE_CONTEXT = {
   college: 'NIT Campus Partner',
   city: 'Kathmandu',
   counselorName: 'Senior Advisor Prakash',
-  counselorPhone: '+977 980-0000000',
+  counselorPhone: '+91 89718 71113',
   counselorEmail: 'admissions@gemsgroup.edu.np',
   year: '2027/28',
   notes: 'Student scored 84% in Class 12 PCM. Inquired about merit scholarship quota and hostel accommodation.',

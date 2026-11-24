@@ -6,6 +6,7 @@ import { loadEmailConfig } from '@/lib/email/config';
 import { sendEmailWithResend, renderLeadWelcomeEmail } from '@/lib/email/resend';
 import { loadEmailTemplates, interpolateEmailTemplate } from '@/lib/email/templates';
 import { parseLeadNotes, serializeLeadNotes, type LeadNote } from '@/lib/leads/notes';
+import { getWorkspaceWhatsAppPhone } from '@/lib/whatsapp/wa-phone';
 
 export const dynamic = 'force-dynamic';
 
@@ -130,9 +131,10 @@ export async function POST(request: Request) {
       );
     }
 
-    // Resolve assigned counselor details
+    // Resolve assigned counselor details with workspace WhatsApp Cloud AI number
+    const waPhone = await getWorkspaceWhatsAppPhone(admin, effectiveAccountId);
     let counselorName = profile?.full_name || 'Senior Admissions Counselor';
-    let counselorPhone = '+977 980-0000000';
+    let counselorPhone = waPhone.displayPhone;
     let counselorEmail = profile?.email || undefined;
 
     if (lead.assigned_to && lead.assigned_to !== user.id) {

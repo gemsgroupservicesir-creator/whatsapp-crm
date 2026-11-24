@@ -7,6 +7,7 @@ import { decrypt } from '@/lib/whatsapp/encryption';
 import { loadEmailConfig } from '@/lib/email/config';
 import { sendEmailWithResend, renderLeadWelcomeEmail } from '@/lib/email/resend';
 import { serializeLeadNotes, type LeadNote } from '@/lib/leads/notes';
+import { getWorkspaceWhatsAppPhone } from '@/lib/whatsapp/wa-phone';
 
 function getAdminClient() {
   return createClient(
@@ -589,9 +590,10 @@ export async function processIncomingLead(
     try {
       const emailConfig = await loadEmailConfig(admin, accountId);
       if (emailConfig?.apiKey && emailConfig.autoEmailEnabled) {
-        // Resolve assigned counselor profile if available
+        // Resolve assigned counselor profile with workspace WhatsApp Cloud AI number
+        const waPhone = await getWorkspaceWhatsAppPhone(admin, accountId);
         let counselorName = 'Senior Admissions Counselor';
-        let counselorPhone = '+977 980-0000000';
+        let counselorPhone = waPhone.displayPhone;
         let counselorEmail: string | undefined;
 
         if (assignedTo) {

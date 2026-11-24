@@ -5,6 +5,7 @@ import { generateGemini } from '@/lib/ai/providers/gemini';
 import { loadEmailConfig } from '@/lib/email/config';
 import { sendEmailWithResend } from '@/lib/email/resend';
 import { loadAiConfig } from '@/lib/ai/config';
+import { getWorkspaceWhatsAppPhone } from '@/lib/whatsapp/wa-phone';
 
 export interface FollowUpEmailContext {
   studentName: string;
@@ -181,9 +182,12 @@ export async function generateNotesFollowUpEmail(
   const course = (context.course || 'Academic Programs').trim();
   const college = (context.college || 'GEMS Education Partner Institutions').trim();
   const counselor = (context.counselorName || 'Senior Admissions Counselor').trim();
-  const counselorPhone = (context.counselorPhone || '+977 980-0000000').trim();
-  const cleanPhone = counselorPhone.replace(/[^0-9+]/g, '');
-  const waLink = `https://wa.me/${cleanPhone.replace('+', '')}?text=${encodeURIComponent(
+  let counselorPhone = (context.counselorPhone || '+91 89718 71113').trim();
+  if (!counselorPhone || counselorPhone.includes('000000') || counselorPhone.includes('980-0000')) {
+    counselorPhone = '+91 89718 71113';
+  }
+  const cleanPhone = counselorPhone.replace(/[^0-9]/g, '');
+  const waLink = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(
     `Hello ${counselor}, I am following up on our admissions discussion for ${course} at ${college}.`
   )}`;
 
@@ -462,9 +466,10 @@ export async function sendLeadFollowUpEmail(params: {
   // 3. Load AI config (swallow error if none)
   const aiConfig = await loadAiConfig(admin, accountId).catch(() => null);
 
-  // 4. Resolve counselor details
+  // 4. Resolve counselor details with workspace WhatsApp Cloud AI number
+  const waPhone = await getWorkspaceWhatsAppPhone(admin, accountId);
   let counselorName = 'Senior Admissions Counselor';
-  let counselorPhone = '+977 980-0000000';
+  let counselorPhone = waPhone.displayPhone;
   let counselorEmail: string | undefined;
 
   const counselorUserId = lead.assigned_to || currentUserId;

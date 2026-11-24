@@ -9,6 +9,7 @@ import {
 } from '@/lib/email/follow-up';
 import { parseLeadNotes } from '@/lib/leads/notes';
 import { loadAiConfig } from '@/lib/ai/config';
+import { getWorkspaceWhatsAppPhone } from '@/lib/whatsapp/wa-phone';
 
 export const dynamic = 'force-dynamic';
 
@@ -121,8 +122,9 @@ export async function POST(request: Request) {
     if (body.previewOnly === true) {
       const aiConfig = await loadAiConfig(admin, effectiveAccountId).catch(() => null);
 
+      const waPhone = await getWorkspaceWhatsAppPhone(admin, effectiveAccountId);
       let counselorName = profile?.full_name || 'Senior Admissions Counselor';
-      let counselorPhone = '+977 980-0000000';
+      let counselorPhone = waPhone.displayPhone;
       let counselorEmail = profile?.email || undefined;
 
       const counselorUserId = lead.assigned_to || user.id;

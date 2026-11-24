@@ -122,9 +122,12 @@ export function renderLeadWelcomeEmail(
   const course = (context.course || 'Higher Education').trim();
   const college = (context.college || 'GEMS Education Partner Institutions').trim();
   const counselor = (context.counselorName || 'Senior Admissions Counselor').trim();
-  const counselorPhone = (context.counselorPhone || '+977 980-0000000').trim();
-  const cleanPhone = counselorPhone.replace(/[^0-9+]/g, '');
-  const waLink = `https://wa.me/${cleanPhone.replace('+', '')}?text=${encodeURIComponent(
+  let counselorPhone = (context.counselorPhone || '+91 89718 71113').trim();
+  if (!counselorPhone || counselorPhone.includes('000000') || counselorPhone.includes('980-0000')) {
+    counselorPhone = '+91 89718 71113';
+  }
+  const cleanPhone = counselorPhone.replace(/[^0-9]/g, '');
+  const waLink = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(
     `Hello ${counselor}, I received your admissions welcome email regarding ${course}. I would like more details!`
   )}`;
 

@@ -70,4 +70,19 @@ describe('Email Templates Engine', () => {
     expect(rendered.html).toContain('Student');
     expect(rendered.html).toContain('GEMS Education Partner Institutions');
   });
+
+  it('sanitizes counselorPhone and wa_link to WhatsApp Cloud AI number when 0000 is passed', () => {
+    const tmpl = {
+      subject: 'Admissions Contact',
+      bodyHtml: '<p>Contact us: {{counselor_phone}} or chat: <a href="{{wa_link}}">Chat</a></p>',
+    };
+
+    const rendered = interpolateEmailTemplate(tmpl, {
+      counselorPhone: '+977 980-0000000',
+    });
+
+    expect(rendered.html).toContain('+91 89718 71113');
+    expect(rendered.html).toContain('wa.me/918971871113');
+    expect(rendered.html).not.toContain('0000000');
+  });
 });
