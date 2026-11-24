@@ -37,6 +37,13 @@ import {
   MailCheck,
   Filter,
   Edit3,
+  Bot,
+  Zap,
+  Plus,
+  Flame,
+  CheckSquare,
+  Square,
+  ListTodo,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -72,6 +79,12 @@ import {
   type WorkDoneReport,
   type AdminReview,
 } from "@/lib/reports/agent-reports";
+import type {
+  AgentDailyTask,
+  AgentDailyTaskPlan,
+  TaskPriority,
+  TaskStatus,
+} from "@/lib/reports/ai-task-assigner";
 
 interface TeamMember {
   userId: string;
@@ -90,9 +103,9 @@ interface CallerInfo {
 }
 
 export default function ReportsPage() {
-  const [activeTab, setActiveTab] = useState<"attendance_register" | "daily_activity">("attendance_register");
+  const [activeTab, setActiveTab] = useState<"attendance_register" | "ai_tasks" | "daily_activity">("attendance_register");
 
-  // Single date for daily activity
+  // Single date for daily activity and AI tasks
   const [selectedDate, setSelectedDate] = useState<string>(() => {
     const now = new Date();
     const y = now.getFullYear();
@@ -125,6 +138,7 @@ export default function ReportsPage() {
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [sendingDigest, setSendingDigest] = useState<boolean>(false);
+  const [generatingTasks, setGeneratingTasks] = useState<boolean>(false);
 
   // Data from API
   const [caller, setCaller] = useState<CallerInfo | null>(null);
@@ -139,11 +153,17 @@ export default function ReportsPage() {
   const [attendanceRecords, setAttendanceRecords] = useState<DailyAttendanceRecord[]>([]);
   const [attendanceSummary, setAttendanceSummary] = useState<AttendanceSummaryMetrics | null>(null);
 
+  // AI Task Assigner states
+  const [currentTaskPlan, setCurrentTaskPlan] = useState<AgentDailyTaskPlan | null>(null);
+  const [allTaskPlans, setAllTaskPlans] = useState<Record<string, AgentDailyTaskPlan>>({});
+  const [taskStatusFilter, setTaskStatusFilter] = useState<"all" | "pending" | "completed" | "urgent">("all");
+
   // Dialog states
   const [workDayOpen, setWorkDayOpen] = useState(false);
   const [workDoneOpen, setWorkDoneOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [adjustOpen, setAdjustOpen] = useState(false);
+  const [customTaskOpen, setCustomTaskOpen] = useState(false);
   const [submittingAction, setSubmittingAction] = useState(false);
 
   // Form states: Work of the Day
@@ -171,6 +191,12 @@ export default function ReportsPage() {
   const [adjustLocation, setAdjustLocation] = useState<"office" | "remote" | "field">("office");
   const [adjustNote, setAdjustNote] = useState("");
 
+  // Form states: Add Custom Task
+  const [newTaskTitle, setNewTaskTitle] = useState("");
+  const [newTaskDesc, setNewTaskDesc] = useState("");
+  const [newTaskPriority, setNewTaskPriority] = useState<TaskPriority>("medium");
+  const [newTaskDue, setNewTaskDue] = useState("By 5:00 PM");
+
   // Location selector for clock in
   const [workLocation, setWorkLocation] = useState<"office" | "remote" | "field">("office");
 
@@ -193,6 +219,31 @@ export default function ReportsPage() {
       console.error("fetchAttendanceRegister error:", err);
     }
   }, [startDate, endDate, attendanceAgentFilter]);
+
+  // Fetch AI Task Plans
+  const fetchTaskPlans = useCallback(async () => {
+    try {
+      const params = new URLSearchParams({
+        date: selectedDate,
+        agentId: selectedAgentId,
+      });
+
+      const res = await fetch(`/api/reports/tasks?${params.toString()}`);
+      if (!res.ok) return;
+
+      const data = await res.json();
+      if (data.allPlans) {
+        setAllTaskPlans(data.allPlans);
+      }
+      if (data.plan) {
+        setCurrentTaskPlan(data.plan);
+      } else if (selectedAgentId !== "all") {
+        setCurrentTaskPlan(null);
+      }
+    } catch (err: any) {
+      console.error("fetchTaskPlans error:", err);
+    }
+  }, [selectedDate, selectedAgentId]);
 
   // Fetch Single-Day Report Data
   const fetchReportData = useCallback(async (isRefresh = false) => {
@@ -239,6 +290,131 @@ export default function ReportsPage() {
   useEffect(() => {
     fetchAttendanceRegister();
   }, [fetchAttendanceRegister]);
+
+  useEffect(() => {
+    fetchTaskPlans();
+  }, [fetchTaskPlans]);
+
+  // Trigger AI Daily Task Assigner
+  const handleGenerateAiTasks = async () => {
+    try {
+      setGeneratingTasks(true);
+      const res = await fetch("/api/reports/tasks/assign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          date: selectedDate,
+          agentId: selectedAgentId,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to assign AI tasks");
+      }
+
+      toast.success(data.message || `AI assigned ${data.count} tasks for ${selectedDate}!`);
+      fetchTaskPlans();
+    } catch (err: any) {
+      toast.error(err.message || "Task assignment failed");
+    } finally {
+      setGeneratingTasks(false);
+    }
+  };
+
+  // Toggle Task Status (Completed vs Pending)
+  const handleToggleTaskStatus = async (task: AgentDailyTask) => {
+    const newStatus: TaskStatus = task.status === "completed" ? "pending" : "completed";
+    try {
+      const res = await fetch("/api/reports/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "update_status",
+          taskId: task.id,
+          status: newStatus,
+          date: selectedDate,
+          agentId: task.user_id,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to update task");
+      }
+
+      toast.success(newStatus === "completed" ? "Task marked completed! ✅" : "Task marked pending");
+      fetchTaskPlans();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to update task");
+    }
+  };
+
+  // Add Custom Task
+  const handleAddCustomTask = async () => {
+    if (!newTaskTitle.trim()) {
+      toast.error("Please enter a task title");
+      return;
+    }
+
+    try {
+      setSubmittingAction(true);
+      const targetUser = selectedAgentId === "all" ? caller?.userId : selectedAgentId;
+      const res = await fetch("/api/reports/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "add_custom_task",
+          date: selectedDate,
+          agentId: targetUser,
+          customTask: {
+            title: newTaskTitle,
+            description: newTaskDesc,
+            priority: newTaskPriority,
+            due_time: newTaskDue,
+          },
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to add task");
+      }
+
+      toast.success("Task added to daily plan!");
+      setCustomTaskOpen(false);
+      setNewTaskTitle("");
+      setNewTaskDesc("");
+      fetchTaskPlans();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to add task");
+    } finally {
+      setSubmittingAction(false);
+    }
+  };
+
+  // Apply AI Plan to Work of the Day
+  const handleApplyAiPlanToWorkDay = () => {
+    if (!currentTaskPlan) return;
+    setPlanText(
+      `${currentTaskPlan.strategic_focus}\n\nKey Daily Action Items:\n` +
+        currentTaskPlan.tasks
+          .slice(0, 5)
+          .map((t, idx) => `${idx + 1}. ${t.title}`)
+          .join("\n")
+    );
+    setTargetLeads(currentTaskPlan.suggested_lead_target);
+    setTargetCalls(currentTaskPlan.suggested_call_target);
+    setPriorities(
+      currentTaskPlan.tasks
+        .filter((t) => t.priority === "urgent")
+        .map((t) => t.title)
+        .slice(0, 2)
+        .join("; ") || "Urgent admissions callbacks"
+    );
+    setWorkDayOpen(true);
+    toast.success("AI plan populated into morning targets!");
+  };
 
   // Handle Clock In / Clock Out
   const handleClock = async (action: "clock_in" | "clock_out") => {
@@ -524,6 +700,16 @@ export default function ReportsPage() {
     }
   };
 
+  // Filter tasks based on status chip
+  const filteredTasks = useMemo(() => {
+    if (!currentTaskPlan?.tasks) return [];
+    if (taskStatusFilter === "all") return currentTaskPlan.tasks;
+    if (taskStatusFilter === "pending") return currentTaskPlan.tasks.filter((t) => t.status === "pending");
+    if (taskStatusFilter === "completed") return currentTaskPlan.tasks.filter((t) => t.status === "completed");
+    if (taskStatusFilter === "urgent") return currentTaskPlan.tasks.filter((t) => t.priority === "urgent");
+    return currentTaskPlan.tasks;
+  }, [currentTaskPlan, taskStatusFilter]);
+
   // Filter notes
   const filteredNotes = useMemo(() => {
     if (!notesFilter.trim()) return notes;
@@ -552,13 +738,13 @@ export default function ReportsPage() {
             </div>
             <div>
               <h1 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-2">
-                Agent Attendance & Daily Reports
+                Agent Work & Attendance Hub
                 <Badge variant="outline" className="text-xs bg-emerald-500/10 text-emerald-600 border-emerald-500/20 font-medium">
-                  Live Attendance
+                  Live System
                 </Badge>
               </h1>
               <p className="text-sm text-muted-foreground mt-0.5">
-                Everyday login/logout tracking for every agent, counselor notes, daily morning plans, and admin digests.
+                Everyday attendance tracking, Daily AI Task Assigner, student counseling notes, and admin reports.
               </p>
             </div>
           </div>
@@ -575,7 +761,7 @@ export default function ReportsPage() {
               className="h-9 gap-1.5 shadow-sm border-primary/30 text-primary hover:bg-primary/10"
             >
               <MailCheck className={cn("h-4 w-4", sendingDigest && "animate-spin")} />
-              <span>Email Today&apos;s Attendance to Admin</span>
+              <span>Email Attendance to Admin</span>
             </Button>
           )}
 
@@ -595,6 +781,7 @@ export default function ReportsPage() {
             onClick={() => {
               fetchReportData(true);
               fetchAttendanceRegister();
+              fetchTaskPlans();
             }}
             disabled={refreshing}
             className="h-9 gap-1.5 shadow-sm"
@@ -788,11 +975,18 @@ export default function ReportsPage() {
               Everyday Attendance Register
             </TabsTrigger>
             <TabsTrigger
+              value="ai_tasks"
+              className="h-11 rounded-none border-b-2 border-transparent px-2 font-semibold text-sm data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-primary"
+            >
+              <Bot className="h-4 w-4 mr-2 text-primary" />
+              Daily AI Task Assigner
+            </TabsTrigger>
+            <TabsTrigger
               value="daily_activity"
               className="h-11 rounded-none border-b-2 border-transparent px-2 font-semibold text-sm data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-primary"
             >
               <FileText className="h-4 w-4 mr-2" />
-              Agent Daily Plan, EOD & Notes
+              Agent Day Plan, EOD & Notes
             </TabsTrigger>
           </TabsList>
         </div>
@@ -1137,7 +1331,369 @@ export default function ReportsPage() {
           </Card>
         </TabsContent>
 
-        {/* ================= TAB 2: AGENT DAILY ACTIVITY & NOTES ================= */}
+        {/* ================= TAB 2: DAILY AI TASK ASSIGNER ================= */}
+        <TabsContent value="ai_tasks" className="space-y-6 m-0">
+          {/* AI Task Controls */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-card p-4 rounded-xl border border-border shadow-xs">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-primary/10 text-primary">
+                <Bot className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-sm text-foreground flex items-center gap-2">
+                  AI Task Assigner & Action Board
+                  <Badge variant="outline" className="bg-primary/10 text-primary border-primary/20 text-[10px]">
+                    Autonomous Workload Balancing
+                  </Badge>
+                </h3>
+                <p className="text-xs text-muted-foreground">
+                  AI analyzes high-intent leads, pending callbacks, and student inquiries to generate high-conversion daily tasks.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center flex-wrap gap-2.5">
+              <input
+                type="date"
+                value={selectedDate}
+                onChange={(e) => setSelectedDate(e.target.value)}
+                className="bg-background border border-input rounded-md px-2.5 py-1 text-xs text-foreground font-medium"
+              />
+
+              {caller?.isAdmin && (
+                <select
+                  value={selectedAgentId}
+                  onChange={(e) => setSelectedAgentId(e.target.value)}
+                  className="h-8 text-xs rounded-md border border-input bg-background px-2.5 text-foreground font-medium focus:outline-none"
+                >
+                  <option value="all">👥 All Team Overview</option>
+                  {teamMembers.map((m) => (
+                    <option key={m.userId} value={m.userId}>
+                      {m.fullName}
+                    </option>
+                  ))}
+                </select>
+              )}
+
+              <Button
+                onClick={handleGenerateAiTasks}
+                disabled={generatingTasks}
+                size="sm"
+                className="h-8 gap-1.5 text-xs bg-primary hover:bg-primary/90 text-primary-foreground font-medium shadow-xs"
+              >
+                <Zap className={cn("h-3.5 w-3.5", generatingTasks && "animate-spin")} />
+                {caller?.isAdmin ? "Assign Daily AI Tasks" : "Generate My Tasks"}
+              </Button>
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCustomTaskOpen(true)}
+                className="h-8 gap-1 text-xs"
+              >
+                <Plus className="h-3 w-3" />
+                Add Task
+              </Button>
+            </div>
+          </div>
+
+          {selectedAgentId === "all" && caller?.isAdmin ? (
+            /* Admin: All Agents AI Task Completion Overview */
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {teamMembers.map((member) => {
+                  const plan = allTaskPlans[member.userId];
+                  const total = plan?.tasks.length || 0;
+                  const completed = plan?.tasks.filter((t) => t.status === "completed").length || 0;
+                  const rate = total > 0 ? Math.round((completed / total) * 100) : 0;
+                  const urgentCount = plan?.tasks.filter((t) => t.priority === "urgent" && t.status !== "completed").length || 0;
+
+                  return (
+                    <Card key={member.userId} className="border-border/60 shadow-xs hover:border-primary/40 transition-all">
+                      <CardHeader className="p-4 pb-2">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Avatar className="h-8 w-8 border border-border">
+                              <AvatarFallback className="text-xs font-bold bg-primary/10 text-primary">
+                                {member.fullName.slice(0, 2).toUpperCase()}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div>
+                              <CardTitle className="text-sm font-semibold">{member.fullName}</CardTitle>
+                              <CardDescription className="text-[11px]">{member.email}</CardDescription>
+                            </div>
+                          </div>
+                          <Badge variant="outline" className={cn(
+                            "text-xs font-semibold",
+                            rate === 100 ? "bg-emerald-500/15 text-emerald-600 border-emerald-500/30" : "bg-primary/10 text-primary"
+                          )}>
+                            {rate}% Done
+                          </Badge>
+                        </div>
+                      </CardHeader>
+                      <CardContent className="p-4 pt-2 space-y-3">
+                        <div>
+                          <div className="flex justify-between text-xs text-muted-foreground mb-1">
+                            <span>Completed: <strong>{completed} / {total}</strong></span>
+                            {urgentCount > 0 && (
+                              <span className="text-red-600 font-semibold flex items-center gap-1">
+                                <Flame className="h-3 w-3" /> {urgentCount} Urgent Pending
+                              </span>
+                            )}
+                          </div>
+                          <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-primary transition-all duration-500"
+                              style={{ width: `${rate}%` }}
+                            />
+                          </div>
+                        </div>
+
+                        {plan?.strategic_focus && (
+                          <p className="text-[11px] text-muted-foreground bg-muted/30 p-2 rounded-md line-clamp-2 italic">
+                            &quot;{plan.strategic_focus}&quot;
+                          </p>
+                        )}
+                      </CardContent>
+                      <CardFooter className="p-4 pt-0 flex justify-end">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setSelectedAgentId(member.userId)}
+                          className="h-7 text-xs text-primary gap-1"
+                        >
+                          <span>Open Task Board</span>
+                          <ChevronRight className="h-3 w-3" />
+                        </Button>
+                      </CardFooter>
+                    </Card>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            /* Single Agent Task Board */
+            <div className="space-y-6">
+              {/* Strategic Focus & Targets Card */}
+              {currentTaskPlan ? (
+                <Card className="border-primary/20 bg-gradient-to-r from-card via-card to-primary/5 shadow-xs">
+                  <CardContent className="p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-2">
+                        <Badge className="bg-primary/15 text-primary border-primary/30 text-xs">
+                          🎯 Strategic Morning Focus
+                        </Badge>
+                        <span className="text-xs text-muted-foreground">
+                          Assigned for {selectedMember?.fullName || "Agent"} on {selectedDate}
+                        </span>
+                      </div>
+                      <p className="text-sm font-medium text-foreground">
+                        {currentTaskPlan.strategic_focus}
+                      </p>
+                      <div className="flex items-center gap-4 text-xs text-muted-foreground pt-1">
+                        <span>Suggested Calls: <strong className="text-foreground">{currentTaskPlan.suggested_call_target}</strong></span>
+                        <span>•</span>
+                        <span>Leads to Contact: <strong className="text-foreground">{currentTaskPlan.suggested_lead_target}</strong></span>
+                        <span>•</span>
+                        <span>Target Admissions: <strong className="text-emerald-600">{currentTaskPlan.suggested_conversion_target} Confirmed</strong></span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3 shrink-0">
+                      <Button
+                        size="sm"
+                        onClick={handleApplyAiPlanToWorkDay}
+                        variant="outline"
+                        className="h-9 text-xs border-primary/30 text-primary hover:bg-primary/10 gap-1.5"
+                      >
+                        <FileText className="h-3.5 w-3.5" />
+                        Apply to Work of the Day
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : (
+                <Card className="border-dashed border-border py-8 text-center bg-card/40">
+                  <CardContent className="space-y-2">
+                    <p className="text-sm text-muted-foreground">
+                      No AI tasks generated yet for {selectedMember?.fullName || "this agent"} on {selectedDate}.
+                    </p>
+                    <Button
+                      size="sm"
+                      onClick={handleGenerateAiTasks}
+                      disabled={generatingTasks}
+                      className="gap-1.5 text-xs"
+                    >
+                      <Zap className="h-3.5 w-3.5" />
+                      Generate AI Daily Tasks Now
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Task Filter Chips */}
+              <div className="flex items-center justify-between gap-2 border-b border-border/40 pb-2">
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    variant={taskStatusFilter === "all" ? "secondary" : "ghost"}
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() => setTaskStatusFilter("all")}
+                  >
+                    All ({currentTaskPlan?.tasks.length || 0})
+                  </Button>
+                  <Button
+                    variant={taskStatusFilter === "pending" ? "secondary" : "ghost"}
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() => setTaskStatusFilter("pending")}
+                  >
+                    Pending ({currentTaskPlan?.tasks.filter((t) => t.status === "pending").length || 0})
+                  </Button>
+                  <Button
+                    variant={taskStatusFilter === "urgent" ? "secondary" : "ghost"}
+                    size="sm"
+                    className="h-7 text-xs text-red-600"
+                    onClick={() => setTaskStatusFilter("urgent")}
+                  >
+                    Urgent Callbacks ({currentTaskPlan?.tasks.filter((t) => t.priority === "urgent").length || 0})
+                  </Button>
+                  <Button
+                    variant={taskStatusFilter === "completed" ? "secondary" : "ghost"}
+                    size="sm"
+                    className="h-7 text-xs text-emerald-600"
+                    onClick={() => setTaskStatusFilter("completed")}
+                  >
+                    Completed ({currentTaskPlan?.tasks.filter((t) => t.status === "completed").length || 0})
+                  </Button>
+                </div>
+
+                <div className="text-xs text-muted-foreground font-medium">
+                  Progress: {currentTaskPlan?.completion_rate_percent || 0}% Done
+                </div>
+              </div>
+
+              {/* Task Cards List */}
+              <div className="space-y-3">
+                {filteredTasks.length === 0 ? (
+                  <div className="py-12 text-center text-muted-foreground text-xs">
+                    No tasks match this filter.
+                  </div>
+                ) : (
+                  filteredTasks.map((task) => {
+                    const isDone = task.status === "completed";
+
+                    return (
+                      <Card
+                        key={task.id}
+                        className={cn(
+                          "border-border/60 transition-all shadow-xs overflow-hidden",
+                          isDone ? "bg-muted/30 border-muted opacity-80" : "hover:border-primary/40 bg-card"
+                        )}
+                      >
+                        <CardContent className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                          <div className="flex items-start gap-3">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleTaskStatus(task)}
+                              className="mt-0.5 text-muted-foreground hover:text-primary transition-colors focus:outline-none"
+                            >
+                              {isDone ? (
+                                <CheckSquare className="h-5 w-5 text-emerald-600" />
+                              ) : (
+                                <Square className="h-5 w-5 text-muted-foreground" />
+                              )}
+                            </button>
+
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className={cn("font-semibold text-sm", isDone && "line-through text-muted-foreground")}>
+                                  {task.title}
+                                </span>
+
+                                {task.priority === "urgent" ? (
+                                  <Badge className="bg-red-500/15 text-red-600 border-red-500/30 text-[10px] gap-1 font-semibold">
+                                    <Flame className="h-3 w-3" /> Urgent
+                                  </Badge>
+                                ) : task.priority === "high" ? (
+                                  <Badge className="bg-amber-500/15 text-amber-600 border-amber-500/30 text-[10px] font-medium">
+                                    High Priority
+                                  </Badge>
+                                ) : (
+                                  <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                                    {task.priority}
+                                  </Badge>
+                                )}
+
+                                <Badge variant="secondary" className="text-[10px] capitalize">
+                                  {task.category.replace(/_/g, " ")}
+                                </Badge>
+
+                                {task.due_time && (
+                                  <span className="text-[11px] text-muted-foreground flex items-center gap-1">
+                                    <Clock className="h-3 w-3" /> {task.due_time}
+                                  </span>
+                                )}
+                              </div>
+
+                              <p className="text-xs text-foreground/80">
+                                {task.description}
+                              </p>
+
+                              {task.ai_rationale && (
+                                <p className="text-[11px] text-muted-foreground italic flex items-center gap-1.5 pt-0.5">
+                                  <Sparkles className="h-3 w-3 text-primary shrink-0" />
+                                  <span>AI Rationale: {task.ai_rationale}</span>
+                                </p>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Quick Action Buttons for Task */}
+                          <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
+                            {task.wa_link && (
+                              <a
+                                href={task.wa_link}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition-colors"
+                              >
+                                <MessageSquare className="h-3.5 w-3.5" />
+                                WhatsApp
+                              </a>
+                            )}
+
+                            {task.lead_phone && (
+                              <a
+                                href={`tel:${task.lead_phone}`}
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium border border-border bg-card hover:bg-muted text-foreground transition-colors"
+                              >
+                                <Phone className="h-3 w-3" />
+                                Call
+                              </a>
+                            )}
+
+                            <Button
+                              variant={isDone ? "outline" : "secondary"}
+                              size="sm"
+                              onClick={() => handleToggleTaskStatus(task)}
+                              className="h-8 text-xs gap-1"
+                            >
+                              <Check className="h-3 w-3" />
+                              {isDone ? "Done" : "Mark Done"}
+                            </Button>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          )}
+        </TabsContent>
+
+        {/* ================= TAB 3: AGENT DAILY ACTIVITY & NOTES ================= */}
         <TabsContent value="daily_activity" className="space-y-6 m-0">
           {/* Controls: Date Picker & Agent Selector */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-card p-4 rounded-xl border border-border shadow-xs">
@@ -1733,6 +2289,85 @@ export default function ReportsPage() {
           )}
         </TabsContent>
       </Tabs>
+
+      {/* ================= MODAL: ADD CUSTOM TASK ================= */}
+      <Dialog open={customTaskOpen} onOpenChange={setCustomTaskOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Plus className="h-5 w-5 text-primary" />
+              Add Daily Action Task
+            </DialogTitle>
+            <DialogDescription>
+              Assign a custom task or priority callback to today&apos;s action plan.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div>
+              <label className="text-xs font-semibold text-foreground mb-1 block">Task Title *</label>
+              <Input
+                placeholder="e.g. Call Rajesh Sharma regarding fee installment confirmation"
+                value={newTaskTitle}
+                onChange={(e) => setNewTaskTitle(e.target.value)}
+                className="h-8 text-xs"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-semibold text-foreground mb-1 block">Description & Instructions</label>
+              <Textarea
+                placeholder="Details on what needs to be discussed or resolved..."
+                value={newTaskDesc}
+                onChange={(e) => setNewTaskDesc(e.target.value)}
+                rows={2}
+                className="text-xs"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-semibold text-foreground mb-1 block">Priority</label>
+                <select
+                  value={newTaskPriority}
+                  onChange={(e) => setNewTaskPriority(e.target.value as any)}
+                  className="w-full h-8 text-xs rounded-md border border-input bg-background px-2.5 text-foreground"
+                >
+                  <option value="urgent">🔥 Urgent</option>
+                  <option value="high">⚡ High</option>
+                  <option value="medium">Medium</option>
+                  <option value="low">Low</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-foreground mb-1 block">Due Time</label>
+                <Input
+                  placeholder="e.g. By 2:00 PM"
+                  value={newTaskDue}
+                  onChange={(e) => setNewTaskDue(e.target.value)}
+                  className="h-8 text-xs"
+                />
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setCustomTaskOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleAddCustomTask}
+              disabled={submittingAction}
+              className="gap-1.5"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add to Daily Tasks
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ================= MODAL: ADMIN ATTENDANCE ADJUSTMENT ================= */}
       <Dialog open={adjustOpen} onOpenChange={setAdjustOpen}>
