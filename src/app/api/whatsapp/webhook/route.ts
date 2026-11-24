@@ -369,7 +369,16 @@ export async function POST(request: Request) {
 async function resolveAccountForPhoneNumber(
   phoneNumberId: string | undefined
 ): Promise<string | null> {
-  if (!phoneNumberId) return null
+  if (!phoneNumberId) {
+    const { data: allConfigs } = await supabaseAdmin()
+      .from('whatsapp_config')
+      .select('account_id')
+      .limit(2)
+    if (allConfigs && allConfigs.length === 1) {
+      return allConfigs[0].account_id
+    }
+    return null
+  }
   const { data, error } = await supabaseAdmin()
     .from('whatsapp_config')
     .select('account_id')
@@ -379,9 +388,19 @@ async function resolveAccountForPhoneNumber(
     console.error('Error resolving account for status update:', phoneNumberId, error)
     return null
   }
-  if (!data || data.length !== 1) {
+  if (!data || data.length === 0) {
+    const { data: allConfigs } = await supabaseAdmin()
+      .from('whatsapp_config')
+      .select('account_id')
+      .limit(2)
+    if (allConfigs && allConfigs.length === 1) {
+      return allConfigs[0].account_id
+    }
+    return null
+  }
+  if (data.length > 1) {
     console.error(
-      `Status update for phone_number_id ${phoneNumberId} matched ${data?.length ?? 0} configs; message statuses skipped`
+      `Status update for phone_number_id ${phoneNumberId} matched ${data.length} configs; message statuses skipped`
     )
     return null
   }
@@ -401,7 +420,20 @@ async function findConfigForPhoneNumber(
   access_token: string
   mirror_inbound_media?: boolean
 } | null> {
-  if (!phoneNumberId) return null
+  if (!phoneNumberId) {
+    const { data: allConfigs } = await supabaseAdmin()
+      .from('whatsapp_config')
+      .select('*')
+      .limit(2)
+    if (allConfigs && allConfigs.length === 1) {
+      console.info(
+        '[webhook] empty phone_number_id, falling back to sole config:',
+        allConfigs[0].phone_number_id
+      )
+      return allConfigs[0]
+    }
+    return null
+  }
 
   // Find user's config by phone_number_id. `.single()` returns
   // PGRST116 for both 0 rows AND ≥2 rows — distinguish them so
@@ -423,6 +455,18 @@ async function findConfigForPhoneNumber(
   }
 
   if (!configRows || configRows.length === 0) {
+    // Fallback: If only 1 config row exists in the system, use it so we never drop messages
+    const { data: allConfigs } = await supabaseAdmin()
+      .from('whatsapp_config')
+      .select('*')
+      .limit(2)
+    if (allConfigs && allConfigs.length === 1) {
+      console.warn(
+        `[webhook] No config matched phone_number_id ${phoneNumberId}; falling back to sole config ${allConfigs[0].phone_number_id}`
+      )
+      return allConfigs[0]
+    }
+
     console.error('No config found for phone_number_id:', phoneNumberId)
     return null
   }
@@ -512,16 +556,26 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
       }
 
       // Handle incoming messages
-      if (!value.messages || !value.contacts) continue
+      if (!value.messages || value.messages.length === 0) continue
+
+      console.info(
+        `[webhook] Received ${value.messages.length} inbound message(s) for phone_number_id: ${value.metadata?.phone_number_id ?? 'unknown'}`
+      )
 
       const config = await findConfigForPhoneNumber(value.metadata?.phone_number_id)
-      if (!config) continue
+      if (!config) {
+        console.warn(
+          '[webhook] No config found for phone_number_id:',
+          value.metadata?.phone_number_id
+        )
+        continue
+      }
 
       const decryptedAccessToken = decrypt(config.access_token)
 
       for (let i = 0; i < value.messages.length; i++) {
         const message = value.messages[i]
-        const contact = value.contacts[i] || value.contacts[0]
+        const contact = value.contacts?.[i] || value.contacts?.[0]
 
         await processMessage(
           message,
@@ -740,6 +794,10 @@ async function processMessage(
     return
   }
 
+  console.info(
+    `[webhook] Processing inbound message ${message.id} from ${identity.phone || identity.waUserId || 'unknown'}, type: ${message.type}`
+  )
+
   // Find or create contact
   const contactOutcome = await findOrCreateContact(
     accountId,
@@ -892,6 +950,10 @@ async function processMessage(
     )
     return
   }
+
+  console.info(
+    `[webhook] Inbound message ${message.id} recorded in conversation ${conversation.id} from ${identity.phone || identity.waUserId || 'unknown'}`
+  )
 
   const isFirstInboundMessage = await claimFirstInboundMessage(
     supabaseAdmin(),

@@ -338,19 +338,22 @@ function signedPost(body: BodyInit) {
 
 function inboundRequest(
   message: Record<string, unknown> = TEXT_MESSAGE,
-  contacts: Record<string, unknown>[] = LEGACY_CONTACTS,
+  contacts: Record<string, unknown>[] | null = LEGACY_CONTACTS,
 ) {
+  const value: Record<string, unknown> = {
+    metadata: { phone_number_id: 'pn-1' },
+    messages: [message],
+  }
+  if (contacts !== null) {
+    value.contacts = contacts
+  }
   const body = {
     entry: [
       {
         changes: [
           {
             field: 'messages',
-            value: {
-              metadata: { phone_number_id: 'pn-1' },
-              contacts,
-              messages: [message],
-            },
+            value,
           },
         ],
       },
@@ -361,7 +364,7 @@ function inboundRequest(
 
 async function runWebhook(
   message?: Record<string, unknown>,
-  contacts?: Record<string, unknown>[],
+  contacts: Record<string, unknown>[] | null = LEGACY_CONTACTS,
 ) {
   const res = await POST(inboundRequest(message, contacts))
   // Drain the after() callback exactly as the runtime would.
@@ -509,6 +512,20 @@ describe('inbound webhook: idempotent insert (#367)', () => {
     expect(h.runAutomationsForTrigger).not.toHaveBeenCalled()
     expect(h.dispatchInboundToAiReply).not.toHaveBeenCalled()
     expect(h.dispatchWebhookEvent).not.toHaveBeenCalled()
+  })
+
+  it('processes incoming messages even when contacts is omitted by Meta', async () => {
+    await runWebhook(TEXT_MESSAGE, null)
+
+    expect(h.state.upsertCalls).toHaveLength(1)
+    expect(h.state.upsertCalls[0].options).toMatchObject({
+      onConflict: 'conversation_id,message_id',
+      ignoreDuplicates: true,
+    })
+    expect(h.state.upsertCalls[0].row).toMatchObject({
+      sender_type: 'customer',
+      content_text: 'hello',
+    })
   })
 })
 
