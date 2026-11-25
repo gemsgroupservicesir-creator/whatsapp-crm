@@ -30,6 +30,7 @@ import { PipelineCard } from '@/components/dashboard/pipeline-card'
 import { ReplyQueueCard } from '@/components/dashboard/reply-queue-card'
 import { SetupChecklist } from '@/components/dashboard/setup-checklist'
 import { TeamCard } from '@/components/dashboard/team-card'
+import { CrmAiIntelligence } from '@/components/agents/crm-ai-intelligence'
 
 const POLL_MS = 60_000
 const REALTIME_DEBOUNCE_MS = 2_000
@@ -156,6 +157,7 @@ function DashboardPageInner() {
       ) : (
         <>
           <AttentionRow data={data} now={now} onlineCount={onlineCount} />
+          <CrmAiIntelligence compact />
           <KpiRow data={data} currency={defaultCurrency} />
 
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)]">

@@ -8,6 +8,10 @@ import { loadEmailConfig } from '@/lib/email/config';
 import { sendEmailWithResend, renderLeadWelcomeEmail } from '@/lib/email/resend';
 import { parseLeadNotes, serializeLeadNotes, type LeadNote } from '@/lib/leads/notes';
 import { getWorkspaceWhatsAppPhone } from '@/lib/whatsapp/wa-phone';
+import {
+  findMatchingCounsellingPlaybook,
+  renderCounsellingEmailHtml,
+} from '@/lib/counselling/engine';
 
 function getAdminClient() {
   return createClient(
@@ -790,11 +794,17 @@ export async function processIncomingLead(
   if (lead.email && lead.email.includes('@')) {
     try {
       const emailConfig = await loadEmailConfig(admin, accountId);
-      if (emailConfig?.apiKey && emailConfig.autoEmailEnabled) {
+      const matchedPlaybook = await findMatchingCounsellingPlaybook(admin, accountId, {
+        university: lead.college,
+        course: lead.course,
+        requireAutoEmail: true,
+      }).catch(() => null);
+
+      if (emailConfig?.apiKey && (emailConfig.autoEmailEnabled || matchedPlaybook)) {
         // Resolve assigned counselor profile with workspace WhatsApp Cloud AI number
         const waPhone = await getWorkspaceWhatsAppPhone(admin, accountId);
         let counselorName = 'Senior Admissions Counselor';
-        let counselorPhone = waPhone.displayPhone;
+        const counselorPhone = waPhone.displayPhone;
         let counselorEmail: string | undefined;
 
         if (assignedTo) {
@@ -810,21 +820,45 @@ export async function processIncomingLead(
           }
         }
 
-        const renderedEmail = renderLeadWelcomeEmail(
-          {
-            fullName: lead.fullName,
-            email: lead.email,
-            phone: formattedPhone,
-            college: lead.college,
-            course: lead.course,
-            city: lead.city,
-            campaignName: lead.campaignName,
-            counselorName,
-            counselorPhone,
-            counselorEmail,
-          },
-          emailConfig.subjectTemplate
-        );
+        const renderedEmail = matchedPlaybook
+          ? {
+              subject: matchedPlaybook.emailDraft.subject.replace(
+                /\{\{\s*(?:student_name|name)\s*\}\}/gi,
+                lead.fullName || 'Student'
+              ),
+              html: renderCounsellingEmailHtml({
+                subject: matchedPlaybook.emailDraft.subject,
+                headline: matchedPlaybook.emailDraft.headline,
+                studentName: lead.fullName || 'Student',
+                universityName: matchedPlaybook.universityName,
+                courseName: matchedPlaybook.courseName,
+                websiteUrl: matchedPlaybook.websiteUrl,
+                bodyText: matchedPlaybook.emailDraft.bodyText,
+                summaryPoints: matchedPlaybook.emailDraft.summaryPoints,
+                counselorName,
+                counselorPhone,
+                waLink: waPhone.waLink,
+              }),
+              text: matchedPlaybook.emailDraft.bodyText.replace(
+                /\{\{\s*(?:student_name|name)\s*\}\}/gi,
+                lead.fullName || 'Student'
+              ),
+            }
+          : renderLeadWelcomeEmail(
+              {
+                fullName: lead.fullName,
+                email: lead.email,
+                phone: formattedPhone,
+                college: lead.college,
+                course: lead.course,
+                city: lead.city,
+                campaignName: lead.campaignName,
+                counselorName,
+                counselorPhone,
+                counselorEmail,
+              },
+              emailConfig.subjectTemplate
+            );
 
         const sendResult = await sendEmailWithResend({
           apiKey: emailConfig.apiKey,
@@ -847,7 +881,7 @@ export async function processIncomingLead(
           };
           initialNotes.push({
             id: crypto.randomUUID(),
-            text: `📧 Auto-welcome email sent to ${lead.email} (${renderedEmail.subject}).`,
+            text: `📧 ${matchedPlaybook ? `Auto-counselling email (${matchedPlaybook.courseName})` : 'Auto-welcome email'} sent to ${lead.email} (${renderedEmail.subject}).`,
             author_name: 'Admissions AI Assistant',
             author_type: 'ai_agent',
             created_at: new Date().toISOString(),

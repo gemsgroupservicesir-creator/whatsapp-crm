@@ -13,6 +13,7 @@ import {
   ClipboardList,
   Crown,
   GitBranch,
+  GraduationCap,
   LayoutDashboard,
   LogOut,
   MessageSquare,
@@ -96,6 +97,7 @@ const navItems: NavItem[] = [
   { href: "/notifications", labelKey: "notifications", icon: Bell },
   { href: "/contacts", labelKey: "contacts", icon: Users, featureKey: "contacts" },
   { href: "/leads", labelKey: "leads", icon: UserCheck, featureKey: "leads" },
+  { href: "/counselling", labelKey: "counselling", icon: GraduationCap, featureKey: "counselling" },
   { href: "/reports", labelKey: "reports", icon: ClipboardList },
   { href: "/pipelines", labelKey: "pipelines", icon: GitBranch, featureKey: "pipelines" },
   { href: "/broadcasts", labelKey: "broadcasts", icon: Radio, featureKey: "broadcasts" },
@@ -146,6 +148,13 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
     if (!item.featureKey) return true;
     if (item.featureKey === "leads") {
       return enabledFeatures.includes("leads") || enabledFeatures.includes("contacts");
+    }
+    if (item.featureKey === "counselling") {
+      return (
+        enabledFeatures.includes("counselling") ||
+        enabledFeatures.includes("agents") ||
+        enabledFeatures.includes("leads")
+      );
     }
     return enabledFeatures.includes(item.featureKey);
   });

@@ -20,6 +20,7 @@ import {
   type LeadNote,
 } from '@/lib/leads/notes'
 import { matchesLeadAssignmentRule } from '@/lib/leads/meta-leads'
+import { findMatchingCounsellingPlaybook } from '@/lib/counselling/engine'
 
 interface DispatchArgs {
   /** Tenancy key — drives config, contact, and whatsapp_config lookups. */
@@ -219,8 +220,45 @@ export async function dispatchInboundToAiReply(
       campaignContext = `\n\n[CAMPAIGN LEAD CONTEXT]\n${parts.join('\n')}`
     }
 
+    // Check if an automated Agent Counselling Playbook matches this inquiry's university, course, or message
+    let counsellingContext = ''
+    try {
+      const matchedPlaybook = await findMatchingCounsellingPlaybook(db, accountId, {
+        university: leadLog?.college,
+        course: leadLog?.course,
+        messageText: latestUserMessage(messages),
+        requireAutoWhatsapp: true,
+      })
+
+      if (matchedPlaybook) {
+        const pbPoints = matchedPlaybook.counsellingPoints
+          .slice(0, 6)
+          .map((pt) => `- ${pt.title}: ${pt.detail}`)
+          .join('\n')
+        const pbFaqs = matchedPlaybook.objectionHandlers
+          .slice(0, 3)
+          .map((o) => `Q: ${o.question}\nA: ${o.answer}`)
+          .join('\n')
+
+        counsellingContext = [
+          `\n\n[VERIFIED AGENT COUNSELLING PLAYBOOK]`,
+          `University: ${matchedPlaybook.universityName}`,
+          `Course: ${matchedPlaybook.courseName}`,
+          matchedPlaybook.websiteUrl ? `Official Website Link: ${matchedPlaybook.websiteUrl}` : '',
+          `Overview: ${matchedPlaybook.universityOverview}`,
+          pbPoints ? `Key Counselling Points:\n${pbPoints}` : '',
+          pbFaqs ? `Common Student Q&A:\n${pbFaqs}` : '',
+          `Suggested WhatsApp Style Guide:\n${matchedPlaybook.whatsappReplyDraft}`,
+        ]
+          .filter(Boolean)
+          .join('\n')
+      }
+    } catch {
+      // Non-fatal: continue with normal AI reply if playbook lookup unavailable
+    }
+
     const systemPrompt = buildSystemPrompt({
-      userPrompt: (config.systemPrompt || '') + campaignContext,
+      userPrompt: (config.systemPrompt || '') + campaignContext + counsellingContext,
       mode: 'auto_reply',
       knowledge,
     })

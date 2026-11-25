@@ -26,6 +26,12 @@ export const WORKSPACE_FEATURES: WorkspaceFeature[] = [
     iconName: "UserCheck",
   },
   {
+    id: "counselling",
+    name: "Agent Counselling & AI Playbooks",
+    description: "University & course website analyzer, AI counselling points, and automated WhatsApp + email outreach.",
+    iconName: "GraduationCap",
+  },
+  {
     id: "pipelines",
     name: "Deals & Sales Pipelines",
     description: "Visual Kanban deal boards, revenue stages, and sales pipelines.",
@@ -53,7 +59,7 @@ export const WORKSPACE_FEATURES: WorkspaceFeature[] = [
   {
     id: "agents",
     name: "AI Agents & Auto-Reply",
-    description: "AI-assisted drafting, knowledge base, and automated replies.",
+    description: "CRM-wide AI intelligence, assisted drafting, knowledge base, and automated replies.",
     iconName: "Bot",
   },
 ];
@@ -65,9 +71,12 @@ export function normalizeEnabledFeatures(features: unknown): string[] {
     return DEFAULT_ENABLED_FEATURES;
   }
   const set = new Set(features.filter((f): f is string => typeof f === "string"));
-  // Ensure 'leads' is enabled for accounts that existed before 'leads' was introduced
+  // Ensure 'leads' and 'counselling' are enabled for accounts created before they existed
   if (!set.has("leads") && (set.has("contacts") || set.has("inbox") || set.size > 0)) {
     set.add("leads");
+  }
+  if (!set.has("counselling") && (set.has("agents") || set.has("leads") || set.size > 0)) {
+    set.add("counselling");
   }
   return Array.from(set);
 }
